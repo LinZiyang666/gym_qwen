@@ -404,22 +404,20 @@ def experiment(group_name: str, variant: dict):
         def eval_fn(model):
             returns_eval, lengths_eval = [], []
             for _ in range(num_eval_episodes):
-                eval_env = gym.make(gym_env_id)
                 with torch.no_grad():
                     ret, length = evaluate_episode_rtg(
-                        eval_env,
-                        state_dim,
-                        act_dim,
-                        model,
-                        max_ep_len=max_episode_steps,
-                        scale=rtg_scale,
+                        env_name=gym_env_id,
+                        model=model,
                         state_mean=state_mean,
                         state_std=state_std,
+                        target_return=float(target_return),
                         device=device,
-                        target_return=target_return / rtg_scale if rtg_scale != 0 else target_return,
+                        rtg_scale=rtg_scale,
+                        K=K,
+                        max_ep_len=max_episode_steps,
+                        render=False,
                         mode=mode,
                     )
-                eval_env.close()
                 returns_eval.append(ret)
                 lengths_eval.append(length)
             return {
@@ -447,14 +445,30 @@ def experiment(group_name: str, variant: dict):
     # --------- Train with progress reporting
     total_iters = int(variant['max_iters'])
     steps_per_iter = int(variant['num_steps_per_iter'])
-    use_progress_bar = tqdm is not None and total_iters > 0
-    iter_iterator = range(total_iters)
+    total_steps = total_iters * steps_per_iter
+    use_progress_bar = tqdm is not None and total_steps > 0
+    progress_bar = None
     if use_progress_bar:
-        iter_iterator = tqdm(iter_iterator, desc="Training", unit="iter")
+        progress_bar = tqdm(total=total_steps, desc="Training", unit="step")
 
-    for it in iter_iterator:
+    for it in range(total_iters):
         iter_start = time.time()
-        logs = trainer.train_iteration(num_steps=steps_per_iter)
+        if use_progress_bar and progress_bar is not None:
+            logs = trainer.train_iteration(
+                num_steps=steps_per_iter,
+                progress_callback=progress_bar.update,
+            )
+        else:
+            step_count = 0
+
+            def _count_steps(n):
+                nonlocal step_count
+                step_count += n
+
+            logs = trainer.train_iteration(
+                num_steps=steps_per_iter,
+                progress_callback=_count_steps,
+            )
         iter_elapsed = max(time.time() - iter_start, 1e-8)
         steps_per_sec = steps_per_iter / iter_elapsed
         iters_per_sec = 1.0 / iter_elapsed
@@ -474,9 +488,9 @@ def experiment(group_name: str, variant: dict):
             if k.startswith('evaluation/') and k.endswith('_return_mean')
         }
 
-        if use_progress_bar:
+        if use_progress_bar and progress_bar is not None:
             postfix = {
-                'iter/s': f"{iters_per_sec:.2f}",
+                'iter': f"{it+1}/{total_iters}",
                 'steps/s': f"{steps_per_sec:.1f}",
             }
             if loss_val is not None:
@@ -486,11 +500,13 @@ def experiment(group_name: str, variant: dict):
             for name, value in list(eval_returns.items())[:2]:
                 if value is not None:
                     postfix[name] = f"{value:.1f}"
-            iter_iterator.set_postfix(postfix, refresh=True)
+            progress_bar.set_postfix(postfix, refresh=True)
         else:
+            steps_done = step_count
             pieces = [
                 f"iter/s: {iters_per_sec:.2f}",
                 f"steps/s: {steps_per_sec:.1f}",
+                f"steps: {steps_done}/{steps_per_iter}",
             ]
             if loss_val is not None:
                 pieces.append(f"loss: {loss_val:.4f}")
@@ -501,8 +517,8 @@ def experiment(group_name: str, variant: dict):
                     pieces.append(f"{name}: {value:.1f}")
             print(f"[iter {it}] " + " | ".join(pieces))
 
-    if use_progress_bar:
-        iter_iterator.close()
+    if use_progress_bar and progress_bar is not None:
+        progress_bar.close()
 
     # --------- Save checkpoint
     os.makedirs("runs", exist_ok=True)
@@ -540,7 +556,7 @@ def parse_args():
     parser.add_argument('--num_steps_per_iter', type=int, default=5000)
 
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
-    parser.add_argument('--scale', type=float, default=1.0, help='RTG scale')
+    parser.add_argument('--scale', type=float, default=1000.0, help='RTG scale (DT 1000)')
     parser.add_argument('--mode', type=str, default='delayed')  # DT classic
     parser.add_argument('--log_to_wandb', action='store_true')
     parser.add_argument('--seed', type=int, default=42)

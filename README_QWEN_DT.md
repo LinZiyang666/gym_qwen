@@ -1,48 +1,32 @@
 
 # Qwen3-Style Decision Transformer (for MuJoCo Humanoid)
 
-This adds a **Qwen3-style Transformer backbone** to the original Decision Transformer codebase you uploaded,
-without changing the original folder layout. New files:
-
-```
-gym/decision_transformer/models/qwen3_transformer.py
-gym/decision_transformer/models/decision_transformer_qwen3.py
-gym/experiment_qwen.py
-gym/train_humanoid_qwen_dt.py
-gym/requirements_qwen.txt
-```
-
-## Key Differences vs GPT-2 DT
-- **RoPE** positional encoding (long-context friendly)
-- **RMSNorm + Pre-Norm**
-- **SwiGLU** FFN (wider `mlp_ratio`, defaults to 5.4×)
-- **Grouped Query Attention (GQA)** with `n_kv_head`
-- No token embeddings inside the Transformer; we feed `inputs_embeds` directly like the original DT
-
 ## Quick Start
 
-1. (Optional) Create env from `conda_env.yml` in your repo or install minimal requirements:
-   ```bash
-   pip install -r gym/requirements_qwen.txt
-   ```
+1. (Optional) Create the Conda environment from `environment.yaml`.
 
-2. Download D4RL Humanoid datasets (if not already):
+2. Download the Humanoid offline datasets:
    ```bash
-   python gym/data/download_d4rl_datasets.py --env humanoid --out gym/data
+   python ./data/download_d4rl_datasets.py --env humanoid --out ./data
    ```
+   **Heads-up:** the downloader may produce file names that differ from what `experiment_qwen.py` expects (`humanoid-medium-v2.pkl`, `humanoid-medium.pkl`, etc.). If you see variants such as `humanoid_medium-v2.pkl`, rename them to the snake-case names used in this repo (e.g., `humanoid-medium-v2.pkl`) so the training script can locate them automatically.
 
-3. Train (0.6B-style config; needs strong GPU memory):
+3. Train (≈0.6B config; requires a strong GPU):
    ```bash
-   cd gym
    python train_humanoid_qwen_dt.py
    ```
 
    For a smaller sanity check:
    ```bash
-   python experiment_qwen.py --env humanoid-medium-v2 --dataset medium \
-     --embed_dim 768 --n_layer 12 --n_head 12 --n_kv_head 4 --mlp_ratio 4.0 \
-     --batch_size 64 --K 20 --max_iters 2 --num_steps_per_iter 1000
+   python experiment_qwen.py --env Humanoid-v5 --dataset medium   --target_returns 5000,8000   --embed_dim 768 --n_layer 12 --n_head 12 --n_kv_head 4 --mlp_ratio 4.0   --batch_size 64 --K 20 --max_iters 1 --num_steps_per_iter 200   --scale 1000.0 --mode delayed
    ```
+
+## Rendering & Evaluation
+- After training, run `render_humanoid_qwen.py` to load the latest `runs/*_latest.pt` checkpoint and watch a rollout:
+  ```bash
+  python render_humanoid_qwen.py --episodes 1 --render_mode human --device cpu
+  ```
+  The script auto-discovers the newest checkpoint and lets you configure the target return (`--target_return`), device (`--device`), and render mode (`--render_mode human/rgb_array`).
 
 ## Notes
 - **Action head** uses `tanh` to fit MuJoCo action range `[-1, 1]`.
@@ -54,5 +38,30 @@ gym/requirements_qwen.txt
 - `embed_dim=2048`, `n_layer=24`, `n_head=16`, `n_kv_head=8`, `mlp_ratio=5.4`
 - Sequence length `K=20` is common in DT; adjust based on memory.
 - Mixed precision (`torch.cuda.amp`) can be enabled if desired in the trainer.
+
+## Parameter Count
+The total number of parameters decomposes into input embeddings, the transformer core, and output heads. Define:
+
+- `H = embed_dim`
+- `N = n_layer`
+- `n_h = n_head`
+- `n_kv = n_kv_head`
+- `S = state_dim`
+- `A = act_dim`
+- `T = max_episode_len`
+- `F = int(mlp_ratio * H)`
+- `r = n_kv / n_h`
+
+Then:
+```
+Params_embed       = H * (T + S + A + 5)
+Params_block       = 2H + H^2 * (2 + 2r) + 3 * H * F
+Params_transformer = N * Params_block + H
+Params_heads       = H*S + S + H*A + A + H + 1
+
+Params_total = Params_embed + Params_transformer + Params_heads
+```
+
+For example, the default large model (`H=2048`, `N=24`, `n_h=16`, `n_kv=8`, `mlp_ratio=5.4`, `S≈348`, `A=17`, `T≈1000`) has roughly **1.94B** parameters; the smaller sanity-check setting (`H=768`, `N=12`, `n_h=12`, `n_kv=4`, `mlp_ratio=4.0`, `S≈348`, `A=17`, `T≈1000`) has about **1.05×10⁸** parameters.
 
 Good luck and happy training!
