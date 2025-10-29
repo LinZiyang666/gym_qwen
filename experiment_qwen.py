@@ -26,6 +26,9 @@ try:
 except ImportError:
     tqdm = None
 
+torch.backends.cuda.matmul.fp32_precision = "tf32"
+torch.backends.cudnn.conv.fp32_precision = "tf32"
+
 # ------------------------- Your project imports (adjust if names differ) -------------------------
 # Make sure these modules exist in your repo; otherwise adapt import paths accordingly.
 try:
@@ -429,7 +432,14 @@ def experiment(group_name: str, variant: dict):
         return eval_fn
 
     eval_fns = [_make_eval_fn(tar) for tar in variant['target_returns']]
-
+    def masked_action_mse(a_hat, a, mask):
+        # a_hat, a: [B, T, act_dim]; mask: [B, T] with 1.0 for real tokens, 0.0 for pad
+        diff2 = (a_hat - a) ** 2                      # [B, T, A]
+        diff2 = diff2 * mask.unsqueeze(-1)            # mask valid tokens
+        denom = mask.sum() * a.shape[-1]              # mean over valid tokens only
+        denom = denom.clamp_min(1)                    # avoid divide-by-zero in tiny batches
+        return diff2.sum() / denom
+        
     loss_fn = lambda _s_hat, a_hat, _r_hat, _s, a, _r: torch.mean((a_hat - a) ** 2)
 
     trainer = SequenceTrainer(
@@ -565,6 +575,7 @@ def parse_args():
     parser.add_argument('--target_returns', type=str, default=None,
                         help="Comma-separated desired returns, e.g. '6000,8000'. "
                              "If omitted, will be auto-set from dataset (median & p90).")
+    
 
     return parser.parse_args()
 

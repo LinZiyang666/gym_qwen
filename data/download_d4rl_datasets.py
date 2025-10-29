@@ -12,8 +12,13 @@ Outputs:
     observations, next_observations, actions, rewards, terminals
 """
 
-import argparse, os, collections, pickle, numpy as np
+import argparse
+import os
+import collections
+import pickle
+import numpy as np
 import gymnasium as gym
+import gym as ogym  # D4RL registers envs on OpenAI Gym (not Gymnasium)
 
 # ---------- Minari availability ----------
 try:
@@ -33,7 +38,7 @@ def check_minari_runtime():
     try:
         import h5py  # noqa: F401
     except Exception:
-        missing.append("h5py (`pip install \"minari[hdf5]\"` 或 `conda install h5py`)")
+        missing.append('h5py (`pip install "minari[hdf5]"` 或 `conda install h5py`)')
     try:
         from PIL import Image  # noqa: F401
     except Exception:
@@ -49,8 +54,9 @@ def minari_id(env_name: str, dataset_type: str) -> str:
 
 
 def d4rl_env_id(env_name: str, dataset_type: str) -> str:
-    # d4rl naming (includes medium-replay): <env>-<dataset>-v2
-    return f"{env_name}-{dataset_type}-v2"
+    # Base D4RL naming (no version suffix here): <env>-<dataset>
+    # We'll try -v2 / bare / -v0 later.
+    return f"{env_name}-{dataset_type}"
 
 
 def ensure_minari_download(mid: str, force: bool = False, verbose: bool = True):
@@ -58,7 +64,7 @@ def ensure_minari_download(mid: str, force: bool = False, verbose: bool = True):
     import minari as _m
     if verbose:
         print(f"[Minari] downloading dataset: {mid} (force={force})")
-    _m.download_dataset(mid, force_download=force)  # <-- 正确的API
+    _m.download_dataset(mid, force_download=force)
 
 
 def build_paths_from_minari_dataset(ds):
@@ -75,7 +81,10 @@ def build_paths_from_minari_dataset(ds):
             next_obs = obs[1:].copy()
             obs = obs[:-1].copy()
         elif obs.shape[0] == acts.shape[0]:
-            next_obs = np.concatenate([obs[1:], obs[-1:]], axis=0).copy() if obs.shape[0] > 1 else obs.copy()
+            if obs.shape[0] > 1:
+                next_obs = np.concatenate([obs[1:], obs[-1:]], axis=0).copy()
+            else:
+                next_obs = obs.copy()
         else:
             raise ValueError(f"Minari episode shapes not aligned: obs {obs.shape}, actions {acts.shape}")
 
@@ -99,8 +108,10 @@ def build_paths_from_d4rl_dataset(dataset, horizon_default=1000):
     for i in range(N):
         done_bool = bool(dataset["terminals"][i])
         final_timestep = bool(dataset["timeouts"][i]) if use_timeouts else (episode_step == horizon_default - 1)
+
         for k in ["observations", "next_observations", "actions", "rewards", "terminals"]:
             data_[k].append(dataset[k][i])
+
         if done_bool or final_timestep:
             episode_data = {k: np.array(v) for k, v in data_.items()}
             paths.append(episode_data)
@@ -142,6 +153,9 @@ def main():
 
     ok_minari, minari_msg = check_minari_runtime()
 
+    # D4RL has replay datasets only for these MuJoCo envs
+    HAS_REPLAY = {"halfcheetah", "hopper", "walker2d", "ant"}
+
     for env_name in envs:
         for dataset_type in ds_list:
             print("=" * 80)
@@ -158,10 +172,10 @@ def main():
                     print(f"[Minari] loading {mid} ...")
                     import minari
                     try:
-                        ds = minari.load_dataset(mid, download=True)  # 会自动下载（若本地无）
+                        ds = minari.load_dataset(mid, download=True)  # auto-download if needed
                     except Exception as e1:
                         msg = str(e1)
-                        # 本地只有 metadata 或缓存损坏时，显式强制下载后重试
+                        # Force re-download if cache is incomplete
                         if "No data found in data path" in msg or "not found" in msg.lower():
                             print(f"[Minari] cache incomplete, force re-download: {mid}")
                             ensure_minari_download(mid, force=True)
@@ -175,10 +189,10 @@ def main():
             elif dataset_type in {"simple", "medium", "expert"} and not ok_minari:
                 print(f"[Minari] skipped: {minari_msg}. Trying d4rl fallback (if available).")
 
-            # ----- d4rl fallback (needed for medium-replay / legacy -v2)
+            # ----- d4rl fallback (needed for medium-replay / legacy -v2 / Minari miss)
             if paths is None:
                 try:
-                    import d4rl  # noqa: F401  # 只在需要时导入，避免无谓触发 mujoco-py
+                    import d4rl  # noqa: F401
                 except Exception as e:
                     raise RuntimeError(
                         "Minari 不可用或该数据集缺失，且未安装 d4rl。\n"
@@ -189,13 +203,41 @@ def main():
                         f"(debug: d4rl import error: {e})"
                     )
                 try:
-                    eid = d4rl_env_id(env_name, dataset_type)
-                    print(f"[d4rl] loading {eid} via env.get_dataset() ...")
-                    env = gym.make(eid)
-                    dataset = env.get_dataset()
-                    paths = build_paths_from_d4rl_dataset(dataset)
+                    if dataset_type == "medium-replay" and env_name not in HAS_REPLAY:
+                        print(f"[skip] {env_name}-medium-replay not available in D4RL/Minari; skipping.")
+                        paths = []
+                    else:
+                        eid = d4rl_env_id(env_name, dataset_type)  # e.g., "halfcheetah-medium-replay"
+                        print(f"[d4rl] loading {eid} via env.get_dataset() ...")
+
+                        # Try common D4RL variants: v2 (most MuJoCo tasks), then bare, then v0
+                        candidates = [f"{eid}-v2", eid, f"{eid}-v0"]
+                        last_exc = None
+                        env = None
+                        for cid in candidates:
+                            try:
+                                print(f"[d4rl] trying env id: {cid}")
+                                env = ogym.make(cid)  # OpenAI Gym registry
+                                print(f"[d4rl] using env id: {cid}")
+                                break
+                            except Exception as _e:
+                                last_exc = _e
+
+                        if env is None:
+                            raise RuntimeError(
+                                f"None of these env IDs exist for {eid}: {candidates} (last error: {last_exc})"
+                            )
+
+                        dataset = env.get_dataset()
+                        paths = build_paths_from_d4rl_dataset(dataset)
+
                 except Exception as e:
                     raise RuntimeError(f"Failed to load {env_name}-{dataset_type} from d4rl: {e}")
+
+            # Skip saving when no data was found/available
+            if not paths:
+                print(f"[skip] no dataset produced for {env_name}-{dataset_type}.")
+                continue
 
             summarize_and_dump(paths, out_pkl)
 
