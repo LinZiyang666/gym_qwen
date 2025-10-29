@@ -4,3 +4,4 @@
 __pycache__/
 runs/
 data/*.pkl
+Miniconda3-latest-Linux-x86_64.sh
