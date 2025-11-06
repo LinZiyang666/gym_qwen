@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
+export NCCL_SOCKET_IFNAME=lo
+export NCCL_IB_DISABLE=1
+export NCCL_P2P_DISABLE=0
+export NCCL_DEBUG=INFO
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+
 torchrun --nproc_per_node=8 \
   scripts/train_pipeline_ddp.py \
   --model qwen3 \
