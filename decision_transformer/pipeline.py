@@ -70,7 +70,7 @@ class DTStageInput(_DTStageBase):
         inputs: Tuple[
             torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
         ],
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         timesteps, states, actions, returns_to_go, traj_mask = inputs
         B, T, _ = states.shape
 
@@ -86,16 +86,16 @@ class DTStageInput(_DTStageBase):
         h = self.embed_ln(h)
         h = self._run_blocks(h)
 
-        return h, torch.tensor(T, dtype=torch.int64, device=h.device), traj_mask
+        return h, traj_mask
 
 
 class DTStageMiddle(_DTStageBase):
     def forward(
-        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        h, t_tensor, traj_mask = inputs
+        self, inputs: Tuple[torch.Tensor, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        h, traj_mask = inputs
         h = self._run_blocks(h)
-        return h, t_tensor, traj_mask
+        return h, traj_mask
 
 
 class DTStageOutput(_DTStageBase):
@@ -119,13 +119,13 @@ class DTStageOutput(_DTStageBase):
         self.predict_action = nn.Sequential(*head_layers)
 
     def forward(
-        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        self, inputs: Tuple[torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        h, t_tensor, traj_mask = inputs
+        h, traj_mask = inputs
         h = self._run_blocks(h)
 
         B = h.size(0)
-        T = int(t_tensor.item())
+        T = traj_mask.size(1)
         h = h.reshape(B, T, 3, self.h_dim).permute(0, 2, 1, 3)
 
         return_preds = self.predict_rtg(h[:, 2])
@@ -281,7 +281,7 @@ class QwenStageInput(_QwenStageBase):
         inputs: Tuple[
             torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
         ],
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         timesteps, states, actions, returns_to_go, traj_mask = inputs
         B, T, _ = states.shape
 
@@ -300,16 +300,16 @@ class QwenStageInput(_QwenStageBase):
         attn_mask = self._causal(h.size(1), device=h.device, dtype=h.dtype)
         h = self._run_blocks(h, attn_mask)
 
-        return h, attn_mask, torch.tensor(T, dtype=torch.int64, device=h.device), traj_mask
+        return h, attn_mask, traj_mask
 
 
 class QwenStageMiddle(_QwenStageBase):
     def forward(
-        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        h, attn_mask, t_tensor, traj_mask = inputs
+        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        h, attn_mask, traj_mask = inputs
         h = self._run_blocks(h, attn_mask)
-        return h, attn_mask, t_tensor, traj_mask
+        return h, attn_mask, traj_mask
 
 
 class QwenStageOutput(_QwenStageBase):
@@ -347,13 +347,13 @@ class QwenStageOutput(_QwenStageBase):
         self.predict_action = nn.Sequential(*head_layers)
 
     def forward(
-        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        self, inputs: Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        h, attn_mask, t_tensor, traj_mask = inputs
+        h, attn_mask, traj_mask = inputs
         h = self._run_blocks(h, attn_mask)
 
         B = h.size(0)
-        T = int(t_tensor.item())
+        T = traj_mask.size(1)
         h = h.view(B, T, 3, self.hidden_size).permute(0, 2, 1, 3)
 
         return_preds = self.predict_rtg(h[:, 2])
