@@ -257,19 +257,21 @@ def train(args):
     _dbg(rank, f"device set to {device}")
 
     # Stage-0 specific setup: dataset + environment metadata
-    if args.env == "walker2d":
+    env_arg = args.env.lower()
+
+    if env_arg in {"walker2d", "walker2d-v3", "walker2d_v3"}:
         env_name = "Walker2d-v3"
         rtg_target = 5000.0
         env_d4rl_name = f"walker2d-{args.dataset}-v2"
-    elif args.env == "halfcheetah":
+    elif env_arg in {"halfcheetah", "halfcheetah-v3", "halfcheetah_v3"}:
         env_name = "HalfCheetah-v3"
         rtg_target = 6000.0
         env_d4rl_name = f"halfcheetah-{args.dataset}-v2"
-    elif args.env == "hopper":
+    elif env_arg in {"hopper", "hopper-v3", "hopper_v3"}:
         env_name = "Hopper-v3"
         rtg_target = 3600.0
         env_d4rl_name = f"hopper-{args.dataset}-v2"
-    elif args.env == "humanoid":
+    elif env_arg in {"humanoid", "humanoid-v5", "humanoid_v5"}:
         env_name = "Humanoid-v5"
         env_d4rl_name = f"humanoid-{args.dataset}-v5"
         rtg_target = None
