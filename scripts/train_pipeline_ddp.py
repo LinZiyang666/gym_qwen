@@ -598,4 +598,7 @@ def main():
 if __name__ == "__main__":
     main()
 def _dbg(rank: int, message: str):
-    print(f"[rank {rank}] {message}", flush=True)
+    try:
+        print(f"[rank {rank}] {message}", flush=True)
+    except Exception:
+        pass
