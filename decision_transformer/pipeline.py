@@ -305,6 +305,7 @@ class QwenStageInput(_QwenStageBase):
         self.embed_state = nn.Linear(state_dim, hidden_size)
         self.embed_action = nn.Linear(act_dim, hidden_size)
         self.drop = nn.Dropout(drop_p)
+
     def forward(
         self,
         inputs: Tuple[
@@ -325,6 +326,11 @@ class QwenStageInput(_QwenStageBase):
 
         h = self.embed_ln(h)
         h = self.drop(h)
+
+        # Keep padded tokens inactive and preserve the dependency on traj_mask for exporting.
+        mask = traj_mask.to(device=h.device, dtype=h.dtype).unsqueeze(-1)
+        mask = torch.repeat_interleave(mask, repeats=3, dim=1)
+        h = h * mask
 
         attn_mask = self._causal(h.size(1), device=h.device, dtype=h.dtype)
         h = self._run_blocks(h, attn_mask)
