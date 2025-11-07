@@ -328,7 +328,7 @@ class QwenStageInput(_QwenStageBase):
         h = self.drop(h)
 
         # Keep padded tokens inactive and preserve the dependency on traj_mask for exporting.
-        mask = traj_mask.to(device=h.device, dtype=h.dtype).unsqueeze(-1)
+        mask = traj_mask.unsqueeze(-1).to(dtype=h.dtype)
         mask = torch.repeat_interleave(mask, repeats=3, dim=1)
         h = h * mask
 
