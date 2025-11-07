@@ -3,6 +3,7 @@ import csv
 import math
 import os
 import random
+import time
 import sys
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -237,7 +238,9 @@ def train(args):
     pp_rank = rank % args.pipeline_stages
     _dbg(rank, f"dp_rank={dp_rank}, pp_rank={pp_rank}")
 
+    time.sleep(dist.get_rank()/10)
     pipeline_group = dist.new_group(ranks=pipeline_group_ranks[dp_rank])
+    time.sleep(dist.get_rank()/10)
     stage_dp_group = dist.new_group(ranks=stage_dp_group_ranks[pp_rank])
 
     pipeline_group_rank = dist.get_rank(pipeline_group)
