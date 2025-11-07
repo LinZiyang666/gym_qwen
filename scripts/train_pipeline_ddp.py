@@ -355,6 +355,7 @@ def train(args):
         torch.zeros((micro_batch_size, args.context_len, state_dim), dtype=torch.float32),
         torch.zeros((micro_batch_size, args.context_len, act_dim), dtype=torch.float32),
         torch.zeros((micro_batch_size, args.context_len, 1), dtype=torch.float32),
+        torch.zeros((micro_batch_size, args.context_len), dtype=torch.float32),
     )
 
     _dbg(rank, "tracing pipeline with torch.distributed.pipelining")
@@ -387,10 +388,10 @@ def train(args):
     output_merge_spec = TensorChunkSpec(0)
 
     def action_loss_fn(outputs, target):
-        traj_mask = target
+        traj_mask = target[..., -1]
+        action_target = target[..., :-1]
         _, action_preds, _ = outputs
         valid = traj_mask.reshape(-1) > 0.0
-        action_target = action_preds.detach()
         preds_flat = action_preds.reshape(-1, act_dim)[valid]
         target_flat = action_target.reshape(-1, act_dim)[valid]
         if preds_flat.numel() == 0:
@@ -464,14 +465,19 @@ def train(args):
                 states = torch.empty((args.batch_size, args.context_len, state_dim), dtype=torch.float32, device=device)
                 actions = torch.empty((args.batch_size, args.context_len, act_dim), dtype=torch.float32, device=device)
                 returns_to_go = torch.empty((args.batch_size, args.context_len, 1), dtype=torch.float32, device=device)
+                traj_mask = torch.empty((args.batch_size, args.context_len), dtype=torch.float32, device=device)
 
             _dbg(rank, "broadcasting batch tensors")
             _broadcast_tensor(timesteps, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(states, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(actions, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(returns_to_go, src_global_rank=group_stage0_global, group=pipeline_group)
+            _broadcast_tensor(traj_mask, src_global_rank=group_stage0_global, group=pipeline_group)
 
-            action_target = traj_mask.clone()
+            action_target = torch.cat(
+                (actions.detach(), traj_mask.unsqueeze(-1)),
+                dim=-1,
+            ).detach()
 
             optimizer.zero_grad(set_to_none=True)
             losses: List[torch.Tensor] = []
