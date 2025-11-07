@@ -355,7 +355,6 @@ def train(args):
         torch.zeros((micro_batch_size, args.context_len, state_dim), dtype=torch.float32),
         torch.zeros((micro_batch_size, args.context_len, act_dim), dtype=torch.float32),
         torch.zeros((micro_batch_size, args.context_len, 1), dtype=torch.float32),
-        torch.ones((micro_batch_size, args.context_len), dtype=torch.float32),
     )
 
     _dbg(rank, "tracing pipeline with torch.distributed.pipelining")
@@ -465,14 +464,12 @@ def train(args):
                 states = torch.empty((args.batch_size, args.context_len, state_dim), dtype=torch.float32, device=device)
                 actions = torch.empty((args.batch_size, args.context_len, act_dim), dtype=torch.float32, device=device)
                 returns_to_go = torch.empty((args.batch_size, args.context_len, 1), dtype=torch.float32, device=device)
-                traj_mask = torch.empty((args.batch_size, args.context_len), dtype=torch.float32, device=device)
 
             _dbg(rank, "broadcasting batch tensors")
             _broadcast_tensor(timesteps, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(states, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(actions, src_global_rank=group_stage0_global, group=pipeline_group)
             _broadcast_tensor(returns_to_go, src_global_rank=group_stage0_global, group=pipeline_group)
-            _broadcast_tensor(traj_mask, src_global_rank=group_stage0_global, group=pipeline_group)
 
             action_target = traj_mask.clone()
 
