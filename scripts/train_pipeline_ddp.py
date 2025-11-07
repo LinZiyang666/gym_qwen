@@ -240,8 +240,10 @@ def train(args):
 
     time.sleep(dist.get_rank()/10)
     pipeline_group = dist.new_group(ranks=pipeline_group_ranks[dp_rank])
+    print(f"[{dist.get_rank()}] 第一个")
     time.sleep(dist.get_rank()/10)
     stage_dp_group = dist.new_group(ranks=stage_dp_group_ranks[pp_rank])
+    print(f"[{dist.get_rank()}] 第二个")
 
     pipeline_group_rank = dist.get_rank(pipeline_group)
     stage_dp_group_size = dist.get_world_size(stage_dp_group)
