@@ -1,3 +1,4 @@
+import inspect
 import os
 import random
 import time
@@ -59,6 +60,15 @@ def evaluate_on_env(model, device, context_len, env, rtg_target, rtg_scale,
 
     model.eval()
 
+    def _model_requires_traj_mask(module) -> bool:
+        try:
+            sig = inspect.signature(module.forward)
+        except (ValueError, TypeError):
+            return False
+        return any(param.name == "traj_mask" for param in sig.parameters.values())
+
+    needs_traj_mask = _model_requires_traj_mask(model)
+
     with torch.no_grad():
 
         for _ in range(num_eval_ep):
@@ -70,6 +80,22 @@ def evaluate_on_env(model, device, context_len, env, rtg_target, rtg_scale,
                                 dtype=torch.float32, device=device)
             rewards_to_go = torch.zeros((eval_batch_size, max_test_ep_len, 1),
                                 dtype=torch.float32, device=device)
+            if needs_traj_mask:
+                traj_mask = torch.zeros((eval_batch_size, max_test_ep_len),
+                                        dtype=torch.float32, device=device)
+            else:
+                traj_mask = None
+
+            def _forward_with_slice(start: int, end: int):
+                args = (
+                    timesteps[:, start:end],
+                    states[:, start:end],
+                    actions[:, start:end],
+                    rewards_to_go[:, start:end],
+                )
+                if needs_traj_mask and traj_mask is not None:
+                    args = args + (traj_mask[:, start:end],)
+                return model.forward(*args)
 
             # init episode
             reset_out = env.reset()
@@ -92,17 +118,15 @@ def evaluate_on_env(model, device, context_len, env, rtg_target, rtg_scale,
                 running_rtg = running_rtg - (running_reward / rtg_scale)
                 rewards_to_go[0, t] = running_rtg
 
+                if needs_traj_mask:
+                    traj_mask[0, t] = 1.0
+
                 if t < context_len:
-                    _, act_preds, _ = model.forward(timesteps[:,:context_len],
-                                                states[:,:context_len],
-                                                actions[:,:context_len],
-                                                rewards_to_go[:,:context_len])
+                    _, act_preds, _ = _forward_with_slice(0, context_len)
                     act = act_preds[0, t].detach()
                 else:
-                    _, act_preds, _ = model.forward(timesteps[:,t-context_len+1:t+1],
-                                                states[:,t-context_len+1:t+1],
-                                                actions[:,t-context_len+1:t+1],
-                                                rewards_to_go[:,t-context_len+1:t+1])
+                    start = t - context_len + 1
+                    _, act_preds, _ = _forward_with_slice(start, t + 1)
                     act = act_preds[0, -1].detach()
 
                 step_out = env.step(act.cpu().numpy())
