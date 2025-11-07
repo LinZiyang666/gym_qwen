@@ -281,18 +281,32 @@ class Qwen3MLP(nn.Module):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 class Qwen3Block(nn.Module):
-    def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim, mlp_ratio=3.0, attn_dropout=0.0, bias=False):
+    def __init__(
+        self,
+        hidden_size,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        mlp_ratio=3.0,
+        attn_dropout=0.0,
+        bias=False,
+        rope=None,
+    ):
         super().__init__()
         intermediate = int(mlp_ratio * hidden_size)
         self.input_norm = RMSNorm(hidden_size)
         self.attn = Qwen3Attention(hidden_size, num_heads, num_kv_heads, head_dim, attn_dropout, bias)
         self.post_attn_norm = RMSNorm(hidden_size)
         self.mlp = Qwen3MLP(hidden_size, intermediate)
+        self.rope = rope
 
-    def forward(self, x, attn_mask, rope):
+    def forward(self, x, attn_mask, rope=None):
+        rope_ref = rope if rope is not None else self.rope
+        if rope_ref is None:
+            raise ValueError("Qwen3Block requires a RotaryEmbedding instance.")
         residual = x
         x = self.input_norm(x)
-        x = self.attn(x, attn_mask, rope)
+        x = self.attn(x, attn_mask, rope_ref)
         x = residual + x
         residual = x
         x = self.post_attn_norm(x)
@@ -352,7 +366,18 @@ class DecisionTransformerQwen3(nn.Module):
         # transformer blocks
         blocks = []
         for _ in range(n_layers):
-            blocks.append(Qwen3Block(hidden_size, num_heads, num_kv_heads, head_dim, mlp_ratio=3.0, attn_dropout=attn_dropout, bias=False))
+            blocks.append(
+                Qwen3Block(
+                    hidden_size,
+                    num_heads,
+                    num_kv_heads,
+                    head_dim,
+                    mlp_ratio=3.0,
+                    attn_dropout=attn_dropout,
+                    bias=False,
+                    rope=self.rope,
+                )
+            )
         self.blocks = nn.ModuleList(blocks)
         self.drop = nn.Dropout(drop_p)
 
@@ -395,7 +420,7 @@ class DecisionTransformerQwen3(nn.Module):
 
         # pass through Qwen3 blocks
         for blk in self.blocks:
-            h = blk(h, attn_mask, self.rope)
+            h = blk(h, attn_mask)
 
         # reshape back to three streams
         h = h.view(B, T, 3, self.hidden_size).permute(0, 2, 1, 3)
