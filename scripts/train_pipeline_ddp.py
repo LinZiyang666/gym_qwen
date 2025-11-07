@@ -241,7 +241,7 @@ def train(args):
     time.sleep(dp_rank)
     pipeline_group = dist.new_group(ranks=pipeline_group_ranks[dp_rank])
     print(f"[{dist.get_rank()}] 第一个 {pipeline_group_ranks[dp_rank]}")
-    time.sleep(dist.get_rank()+1)
+    time.sleep(dp_rank)
     stage_dp_group = dist.new_group(ranks=stage_dp_group_ranks[pp_rank])
     print(f"[{dist.get_rank()}] 第二个 {stage_dp_group_ranks[pp_rank]}")
 
