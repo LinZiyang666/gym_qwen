@@ -372,18 +372,17 @@ def train(args):
         device=device,
         group=pipeline_group,
     )
-    stage.submod.train()
+    ddp_wrapper = None
     if stage_dp_group_size > 1:
-        # import time
-        # time.sleep(1)
-        stage.submod = DDP(
+        ddp_wrapper = DDP(
             stage.submod,
             device_ids=[device_idx],
             process_group=stage_dp_group,
             broadcast_buffers=False,
             find_unused_parameters=False,
         )
-    stage.submod.train()
+    stage_module_actual = ddp_wrapper.module if ddp_wrapper is not None else stage.submod
+    stage_module_actual.train()
 
     args_chunk_spec = TensorChunkSpec.from_tuple((0, 0, 0, 0, 0))
     output_merge_spec = (
@@ -494,7 +493,7 @@ def train(args):
             )
 
             if args.grad_clip is not None and args.grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(stage.submod.parameters(), args.grad_clip)
+                torch.nn.utils.clip_grad_norm_(stage_module_actual.parameters(), args.grad_clip)
             optimizer.step()
             scheduler.step()
 
@@ -526,7 +525,7 @@ def train(args):
             csv_writer.writerow([time_elapsed, total_updates, mean_loss])
 
     # Save final weights (gather stage states to pipeline group root then global rank 0 saves)
-    state_dict = stage.submod.module.state_dict() if isinstance(stage.submod, DDP) else stage.submod.state_dict()
+    state_dict = stage_module_actual.state_dict()
     stage_states = _gather_stage_states(
         state_dict,
         pipeline_group=pipeline_group,
