@@ -27,4 +27,4 @@ torchrun --nproc_per_node=8 \
   --warmup_steps 10000 \
   --grad_clip 0.25 \
   --log_dir dt_runs/qwen3_pp \
-  --dist_backend gloo "$@"
+  --dist_backend nccl "$@"
