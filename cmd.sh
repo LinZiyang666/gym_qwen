@@ -72,7 +72,7 @@ case "$CONFIG" in
       --grad_clip 0.25 \
       --max_train_iters 100 \
       --num_updates_per_iter 1000 \
-      --eval_interval 1 \
+      --eval_interval 5 \
       --progress_refresh 2.0 \
       --log_dir dt_runs/gpt1b_pp \
       --dist_backend nccl "${EXTRA_ARGS[@]}"
@@ -97,7 +97,7 @@ case "$CONFIG" in
       --grad_clip 0.25 \
       --max_train_iters 100 \
       --num_updates_per_iter 1000 \
-      --eval_interval 1 \
+      --eval_interval 5 \
       --progress_refresh 2.0 \
       --log_dir dt_runs/gpt1b_pp \
       --resume_checkpoint dt_runs/gpt1b_pp/dtpp_humanoid-medium-v5_ckpt_iter00003_updates00003000.pt \
