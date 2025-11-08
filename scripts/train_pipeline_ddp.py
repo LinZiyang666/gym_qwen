@@ -243,6 +243,35 @@ def _gather_stage_states(
     return None
 
 
+def _save_pipeline_checkpoint(
+    *,
+    traced_pipe,
+    stage_module_actual: nn.Module,
+    pipeline_group: dist.ProcessGroup,
+    pipeline_group_rank: int,
+    group_stage0_global: int,
+    pp_rank: int,
+    save_path: str,
+) -> None:
+    state_dict = stage_module_actual.state_dict()
+    stage_states = _gather_stage_states(
+        state_dict,
+        pipeline_group=pipeline_group,
+        stage_idx=pp_rank,
+        is_group_root=(pipeline_group_rank == 0),
+        group_root_global=group_stage0_global,
+    )
+    if pipeline_group_rank == 0:
+        for local_idx, state in enumerate(stage_states or []):
+            traced_pipe.get_stage_module(local_idx).load_state_dict(state)
+    dist.barrier()
+    rank = dist.get_rank()
+    if rank == 0:
+        torch.save(traced_pipe.split_gm.state_dict(), save_path)
+        _dbg(rank, f"saved checkpoint to {save_path}")
+    dist.barrier()
+
+
 def _strip_stage_prefix(stage_idx: int, state: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     """Remove the leading 'stage_{idx}.' prefix applied by FX graph modules."""
     prefix = f"stage_{stage_idx}."
@@ -622,14 +651,10 @@ def train(args):
             time_elapsed = str(datetime.now().replace(microsecond=0) - start_time)
             if progress_tracker is not None:
                 progress_tracker.update(0, force=True)
-            reward_str = "N/A" if math.isnan(latest_eval_reward) else f"{latest_eval_reward:.5f}"
-            ep_len_str = "N/A" if math.isnan(latest_eval_ep_len) else f"{latest_eval_ep_len:.5f}"
             print("=" * 60)
             print(f"time elapsed: {time_elapsed}")
             print(f"num of updates: {total_updates}")
             print(f"action loss: {mean_loss:.5f}")
-            print(f"eval avg reward: {reward_str}")
-            print(f"eval avg ep len: {ep_len_str}")
             csv_writer.writerow([time_elapsed, total_updates, mean_loss, latest_eval_reward, latest_eval_ep_len])
 
         should_eval = args.eval_interval > 0 and (
@@ -647,27 +672,33 @@ def train(args):
                     f"reward={latest_eval_reward:.3f} "
                     f"ep_len={latest_eval_ep_len:.2f}"
                 )
+            checkpoint_path = os.path.join(
+                log_dir,
+                f"{prefix}_ckpt_iter{iter_idx + 1:05d}_updates{total_updates:08d}.pt",
+            )
+            _save_pipeline_checkpoint(
+                traced_pipe=traced_pipe,
+                stage_module_actual=stage_module_actual,
+                pipeline_group=pipeline_group,
+                pipeline_group_rank=pipeline_group_rank,
+                group_stage0_global=group_stage0_global,
+                pp_rank=pp_rank,
+                save_path=checkpoint_path,
+            )
 
-    # Save final weights (gather stage states to pipeline group root then global rank 0 saves)
-    state_dict = stage_module_actual.state_dict()
-    stage_states = _gather_stage_states(
-        state_dict,
+    _save_pipeline_checkpoint(
+        traced_pipe=traced_pipe,
+        stage_module_actual=stage_module_actual,
         pipeline_group=pipeline_group,
-        stage_idx=pp_rank,
-        is_group_root=(pipeline_group_rank == 0),
-        group_root_global=group_stage0_global,
+        pipeline_group_rank=pipeline_group_rank,
+        group_stage0_global=group_stage0_global,
+        pp_rank=pp_rank,
+        save_path=save_model_path,
     )
-
-    if pipeline_group_rank == 0:
-        for local_idx, state in enumerate(stage_states or []):
-            traced_pipe.get_stage_module(local_idx).load_state_dict(state)
-
-    dist.barrier()
 
     if rank == 0:
         if progress_tracker is not None:
             progress_tracker.close()
-        torch.save(traced_pipe.split_gm.state_dict(), save_model_path)
         end_time = datetime.now().replace(microsecond=0)
         time_elapsed = str(end_time - start_time)
         end_time_str = end_time.strftime("%y-%m-%d-%H-%M-%S")
