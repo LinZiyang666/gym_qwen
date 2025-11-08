@@ -8,6 +8,11 @@ export NCCL_SOCKET_IFNAME=lo
 export NCCL_IB_DISABLE=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 
+export OMP_NUM_THREADS=$(nproc)
+export MKL_NUM_THREADS=$(nproc)
+export OPENBLAS_NUM_THREADS=$(nproc)
+
+
 CONFIG="${1:-qwen3_pp}"
 case "$CONFIG" in
   qwen3_pp|gpt1b_pp)
