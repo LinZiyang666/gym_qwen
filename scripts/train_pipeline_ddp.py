@@ -3,6 +3,7 @@ import csv
 import math
 import os
 import random
+import re
 import time
 import sys
 from contextlib import contextmanager
@@ -273,6 +274,41 @@ def _save_pipeline_checkpoint(
     dist.barrier()
 
 
+def _load_pipeline_checkpoint(
+    *,
+    traced_pipe,
+    stage_module_actual: nn.Module,
+    pp_rank: int,
+    checkpoint_path: str,
+    strict: bool = True,
+) -> None:
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint '{checkpoint_path}' not found.")
+    rank = dist.get_rank()
+    if rank == 0:
+        _dbg(rank, f"loading checkpoint from {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    missing, unexpected = traced_pipe.split_gm.load_state_dict(checkpoint, strict=False)
+    if strict and (missing or unexpected):
+        raise RuntimeError(
+            f"Checkpoint mismatch while loading '{checkpoint_path}': missing={missing}, unexpected={unexpected}"
+        )
+    stage_state = traced_pipe.get_stage_module(pp_rank).state_dict()
+    stage_module_actual.load_state_dict(stage_state, strict=strict)
+    stage_module_actual.train()
+    dist.barrier()
+
+
+def _infer_resume_progress_from_name(path: str) -> Tuple[Optional[int], Optional[int]]:
+    """Extract completed iterations and total updates from checkpoint file name."""
+    base = os.path.basename(path)
+    iter_match = re.search(r"iter(\d+)", base)
+    updates_match = re.search(r"updates(\d+)", base)
+    iter_idx = int(iter_match.group(1)) if iter_match else None
+    updates = int(updates_match.group(1)) if updates_match else None
+    return iter_idx, updates
+
+
 def _strip_stage_prefix(stage_idx: int, state: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     """Remove the leading 'stage_{idx}.' prefix applied by FX graph modules."""
     prefix = f"stage_{stage_idx}."
@@ -535,8 +571,35 @@ def train(args):
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda steps: min((steps + 1) / args.warmup_steps, 1.0))
     _dbg(rank, "optimizers ready")
 
-    total_progress_updates = args.max_train_iters * args.num_updates_per_iter
-    progress_tracker = ProgressTracker(total_progress_updates, args.progress_refresh) if rank == 0 else None
+    resume_iter_idx = 0
+    resume_updates = 0
+    if args.resume_checkpoint:
+        _load_pipeline_checkpoint(
+            traced_pipe=traced_pipe,
+            stage_module_actual=stage_module_actual,
+            pp_rank=pp_rank,
+            checkpoint_path=args.resume_checkpoint,
+        )
+        inferred_iter, inferred_updates = _infer_resume_progress_from_name(args.resume_checkpoint)
+        if args.resume_iter is not None:
+            resume_iter_idx = max(0, args.resume_iter)
+        elif inferred_iter is not None:
+            resume_iter_idx = max(0, inferred_iter)
+        if args.resume_updates is not None:
+            resume_updates = max(0, args.resume_updates)
+        elif inferred_updates is not None:
+            resume_updates = max(0, inferred_updates)
+        if rank == 0:
+            print(
+                f"Resumed pipeline weights from {args.resume_checkpoint} "
+                f"(start_iter={resume_iter_idx}, total_updates={resume_updates})"
+            )
+    start_iter_idx = min(resume_iter_idx, args.max_train_iters)
+    remaining_iters = max(args.max_train_iters - start_iter_idx, 0)
+    total_progress_updates = max(remaining_iters * args.num_updates_per_iter, 1)
+    progress_tracker = (
+        ProgressTracker(total_progress_updates, args.progress_refresh) if rank == 0 and remaining_iters > 0 else None
+    )
     latest_eval_reward = float("nan")
     latest_eval_ep_len = float("nan")
 
@@ -614,9 +677,9 @@ def train(args):
         print(f"Micro batches: {args.micro_batches}")
         print(f"Device groups: {device_groups}")
 
-    total_updates = 0
+    total_updates = resume_updates
 
-    for iter_idx in range(args.max_train_iters):
+    for iter_idx in range(start_iter_idx, args.max_train_iters):
         if pp_rank == 0 and data_loader is not None:
             sampler.set_epoch(iter_idx)
 
@@ -816,6 +879,19 @@ def main():
     )
 
     parser.add_argument("--dist_backend", type=str, default="nccl")
+    parser.add_argument("--resume_checkpoint", type=str, default=None, help="Path to checkpoint to resume from.")
+    parser.add_argument(
+        "--resume_iter",
+        type=int,
+        default=None,
+        help="Completed outer iterations when resuming; overrides the value inferred from the checkpoint file name.",
+    )
+    parser.add_argument(
+        "--resume_updates",
+        type=int,
+        default=None,
+        help="Completed optimizer updates when resuming; overrides the value inferred from the checkpoint file name.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--log_stage_steps",
