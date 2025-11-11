@@ -57,7 +57,7 @@ case "$CONFIG" in
       scripts/train_pipeline_ddp.py \
       --model qwen3 \
       --env humanoid \
-      --dataset medium \
+      --dataset expert \
       --pipeline_stages 4 \
       --data_parallel_groups 2 \
       --device_groups '0,1,2,3;4,5,6,7' \
@@ -68,15 +68,15 @@ case "$CONFIG" in
       --n_heads 12 \
       --num_kv_heads 6 \
       --head_dim 128 \
-      --lr 1e-4 \
+      --lr 3e-5 \
       --warmup_steps 12000 \
       --grad_clip 0.25 \
-      --max_train_iters 100 \
+      --max_train_iters 150 \
       --num_updates_per_iter 1000 \
       --eval_interval 1 \
       --progress_refresh 2.0 \
       --log_dir dt_runs/qwen3_pp \
-      --resume_checkpoint dt_runs/qwen3_pp/qwen3pp_humanoid-medium-v5_ckpt_iter00046_updates00046000.pt \
+      --resume_checkpoint dt_runs/qwen3_pp/qwen3pp_humanoid-medium-v5_ckpt_iter00076_updates00076000.pt \
       --dist_backend nccl "${EXTRA_ARGS[@]}"
     ;;
   gpt1b_pp)
