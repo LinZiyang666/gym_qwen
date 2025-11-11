@@ -76,7 +76,7 @@ case "$CONFIG" in
       --eval_interval 1 \
       --progress_refresh 2.0 \
       --log_dir dt_runs/qwen3_pp \
-      --resume_checkpoint dt_runs/qwen3_pp/qwen3pp_humanoid-medium-v5_ckpt_iter00046_updates00046000.pt
+      --resume_checkpoint dt_runs/qwen3_pp/qwen3pp_humanoid-medium-v5_ckpt_iter00046_updates00046000.pt \
       --dist_backend nccl "${EXTRA_ARGS[@]}"
     ;;
   gpt1b_pp)
