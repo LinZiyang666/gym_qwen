@@ -1,0 +1,10 @@
+- task=dog-run
+- model_size=5
+- checkpoint=/home/weiland/tdmpc2/tdmpc2/dog-run-3.pt
+- eval_episodes=5
+- save_video=false
+- record_plan_traj=false
+- log_step_speed=true
+- plan_chunk=3
+- horizon=3
+- device=cuda

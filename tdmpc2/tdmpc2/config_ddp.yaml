@@ -1,0 +1,64 @@
+# Configuration for Distributed Data Parallel (DDP) Training
+# This file extends the base config.yaml with DDP-specific settings
+
+defaults:
+  - config
+  - override hydra/launcher: submitit_local
+
+# DDP-specific settings
+# Number of GPUs to use for training
+world_size: 8
+
+# Gradient synchronization frequency
+# 1 = sync every update (default, most stable)
+# 2 = sync every 2 updates (gradient accumulation)
+# Higher values can speed up training but may affect convergence
+sync_freq: 1
+
+# Master node settings for distributed training
+master_addr: localhost
+master_port: 12355
+
+# Training settings
+# Note: batch_size is per-GPU, so effective batch size = batch_size * world_size
+batch_size: 256  # Per-GPU batch size
+# Effective batch size with 8 GPUs: 256 * 8 = 2048
+
+# Example configurations for different scenarios:
+
+# Fast training with large effective batch size:
+# world_size: 8
+# batch_size: 256
+# sync_freq: 1
+# Effective batch size: 2048
+
+# Memory-constrained scenario:
+# world_size: 8
+# batch_size: 128
+# sync_freq: 2
+# Effective batch size: 1024, but lower per-GPU memory usage
+
+# Single-task training settings remain the same
+task: dog-run
+steps: 10_000_000
+model_size: 5
+
+# Evaluation
+eval_freq: 50000
+eval_episodes: 10
+
+# Logging
+# Only rank 0 will log to wandb to avoid conflicts
+enable_wandb: true
+wandb_project: tdmpc2-ddp
+save_video: true
+save_agent: true
+
+# Performance settings
+compile: false  # Disabled in DDP mode for stability
+
+# Note: Each GPU will run independently:
+# - Each has its own environment instance
+# - Each has its own replay buffer
+# - Model parameters are synchronized via DDP
+# - Gradients are averaged across GPUs during backprop
