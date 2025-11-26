@@ -20,6 +20,16 @@ from typing import Optional
 import torch
 from torch import nn
 
+__all__ = [
+    "CorrectorConfig",
+    "BaseCorrector",
+    "TwoTowerCorrector",
+    "TemporalTransformerCorrector",
+    "Corrector",
+    "build_corrector_from_cfg",
+    "corrector_loss",
+]
+
 
 @dataclass
 class CorrectorConfig:
@@ -183,6 +193,66 @@ class TemporalTransformerCorrector(BaseCorrector):
         if self.tanh_output:
             delta_a = torch.tanh(delta_a)
         return a_plan + delta_a
+
+
+class Corrector(TwoTowerCorrector):
+    """Backwards-compatible default corrector alias.
+
+    This wrapper preserves the historical ``Corrector`` API that exposed a simple
+    ``model`` attribute and ``loss_fn`` while reusing :class:`TwoTowerCorrector`
+    as the underlying implementation. When ``self.model`` is set, the forward
+    pass mirrors the legacy behavior by concatenating features and applying the
+    provided module to predict the residual.
+    """
+
+    def __init__(
+        self,
+        obs_dim: int,
+        act_dim: int,
+        latent_dim: int,
+        hidden_dim: int = 256,
+        num_layers: int = 2,
+        tanh_output: bool = True,
+        activation: Optional[nn.Module] = None,
+    ) -> None:
+        super().__init__(
+            latent_dim=latent_dim,
+            act_dim=act_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            activation=activation,
+            tanh_output=tanh_output,
+        )
+        self.model: Optional[nn.Module] = None
+        self.obs_dim = obs_dim
+
+    def forward(
+        self,
+        z_real: torch.Tensor,
+        z_pred: torch.Tensor,
+        a_plan: torch.Tensor,
+        mismatch_history: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.model is None:
+            return super().forward(z_real, z_pred, a_plan, mismatch_history)
+
+        z_real, z_pred, a_plan = self._ensure_batch(z_real, z_pred, a_plan)
+        feat = torch.cat([z_real, z_pred, z_real - z_pred, a_plan], dim=-1)
+        delta_a = self.model(feat)
+        if self.tanh_output:
+            delta_a = torch.tanh(delta_a)
+        return a_plan + delta_a
+
+    def loss_fn(
+        self,
+        a_corr: torch.Tensor,
+        a_teacher: torch.Tensor,
+        *,
+        reg_lambda: float = 0.0,
+        a_spec: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        plan = a_spec if a_spec is not None else a_corr.detach()
+        return corrector_loss(a_corr, a_teacher, plan, reg_lambda=reg_lambda)
 
 
 def build_corrector_from_cfg(cfg, latent_dim: int, act_dim: int, device: Optional[torch.device] = None) -> BaseCorrector:
