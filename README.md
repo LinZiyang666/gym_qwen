@@ -1,104 +1,100 @@
-# Decision Transformer
+<h1>TD-MPC2</span></h1>
+
+This repository is based upon the official implementation of
+
+[TD-MPC2: Scalable, Robust World Models for Continuous Control](https://www.tdmpc2.com) by
+
+[Nicklas Hansen](https://nicklashansen.github.io), [Hao Su](https://cseweb.ucsd.edu/~haosu)\*, [Xiaolong Wang](https://xiaolonw.github.io)\* (UC San Diego)</br>
+
+<img src="assets/0.gif" width="12.5%"><img src="assets/1.gif" width="12.5%"><img src="assets/2.gif" width="12.5%"><img src="assets/3.gif" width="12.5%"><img src="assets/4.gif" width="12.5%"><img src="assets/5.gif" width="12.5%"><img src="assets/6.gif" width="12.5%"><img src="assets/7.gif" width="12.5%"></br>
+
+[[Website]](https://www.tdmpc2.com) [[Paper]](https://arxiv.org/abs/2310.16828) [[Models]](https://www.tdmpc2.com/models)  [[Dataset]](https://www.tdmpc2.com/dataset)
+
+----
 
 
-## Overview
+## Getting started
 
-Minimal code for [Decision Transformer: Reinforcement Learning via Sequence Modeling](https://arxiv.org/abs/2106.01345) for mujoco control tasks in OpenAI gym.
-Notable difference from official implementation are:
+You will need a machine with a GPU and at least 12 GB of RAM for single-task online RL with TD-MPC**2**, and 128 GB of RAM for multi-task offline RL on our provided 80-task dataset. A GPU with at least 8 GB of memory is recommended for single-task online RL and for evaluation of the provided multi-task models (up to 317M parameters). Training of the 317M parameter model requires a GPU with at least 24 GB of memory.
 
-- Simple GPT implementation (causal transformer)
-- Uses PyTorch's Dataset and Dataloader class and removes redundant computations for calculating rewards to go and state normalization for efficient training
-- Can be trained and the results can be visualized and rendered on google colab with the provided notebook
+We provide a `Dockerfile` for easy installation. You can build the docker image by running
 
-#### [Open `min_decision_transformer.ipynb` in Google Colab](https://colab.research.google.com/github/nikhilbarhate99/min-decision-transformer/blob/master/min_decision_transformer.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nikhilbarhate99/min-decision-transformer/blob/master/min_decision_transformer.ipynb)
-
-
-
-## Results
-
-**Note:** these results are mean and variance of 3 random seeds obtained after 20k updates (due to timelimits on GPU resources on colab) while the official results are obtained after 100k updates. So these numbers are not directly comparable, but they can be used as rough reference points along with their corresponding plots to measure the learning progress of the model. The variance in returns and scores should decrease as training reaches saturation.
-
-
-| Dataset | Environment | DT (this repo) 20k updates | DT (official) 100k updates|
-| :---: | :---: | :---: | :---: |
-| Medium | HalfCheetah | 42.18 ± 00.59 | 42.60 ± 00.10 |
-| Medium | Hopper | 69.43 ± 27.34 | 67.60 ± 01.00 |
-| Medium | Walker | 75.47 ± 31.08 | 74.00 ± 01.40 |
-
-
-| ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/halfcheetah-medium-v2.png)  | ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/halfcheetah-medium-v2.gif)  |
-| :---:|:---: |
-
-
-| ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/hopper-medium-v2.png)  | ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/hopper-medium-v2.gif)  |
-| :---:|:---: |
-
-
-| ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/walker2d-medium-v2.png)  | ![](https://github.com/nikhilbarhate99/min-decision-transformer/blob/master/media/walker2d-medium-v2.gif)  |
-| :---:|:---: |
-
-
-
-## Instructions
-
-### Mujoco-py
-
-Install `mujoco-py` library by following instructions on [mujoco-py repo](https://github.com/openai/mujoco-py)
-
-
-### D4RL Data
-
-Datasets are expected to be stored in the `data` directory. Install the [D4RL repo](https://github.com/rail-berkeley/d4rl). Then save formatted data in the `data` directory by running the following script:
 ```
-python3 data/download_d4rl_datasets.py
+cd docker && docker build . -t <user>/tdmpc2:1.0.1
 ```
 
+This docker image contains all dependencies needed for running DMControl. We also provide a pre-built docker image [here](https://hub.docker.com/repository/docker/nicklashansen/tdmpc2/tags/1.0.1/sha256-b07d4e04d4b28ffd9a63ac18ec1541950e874bb51d276c7d09b36135f170dd93).
 
-### Running experiments
+If you prefer to use `conda` rather than docker, start by running the following command:
 
-- Example command for training:
 ```
-python3 scripts/train.py --env halfcheetah --dataset medium --device cuda
+conda env create -f docker/environment.yaml
 ```
 
+The `docker/environment.yaml` file installs dependencies required for training on DMControl tasks. Other domains can be installed by following the instructions in `docker/environment.yaml`.
 
-- Example command for testing with a pretrained model:
+If you want to run ManiSkill2, you will additionally need to download and link the necessary assets by running
+
 ```
-python3 scripts/test.py --env halfcheetah --dataset medium --device cpu --num_eval_ep 1 --chk_pt_name dt_halfcheetah-medium-v2_model_22-02-13-09-03-10_best.pt
+python -m mani_skill2.utils.download_asset all
 ```
-The `dataset` needs to be specified for testing, to load the same state normalization statistics (mean and var) that is used for training.
-An additional `--render` flag can be passed to the script for rendering the test episode.
 
+which downloads assets to `./data`. You may move these assets to any location. Then, add the following line to your `~/.bashrc`:
 
-- Example command for plotting graphs using logged data from the csv files:
 ```
-python3 scripts/plot.py --env_d4rl_name halfcheetah-medium-v2 --smoothing_window 5
+export MS2_ASSET_DIR=<path>/<to>/<data>
 ```
-Additionally `--plot_avg` and `--save_fig` flags can be passed to the script to average all values in one plot and to save the figure.
 
+and restart your terminal. Note that Meta-World requires MuJoCo 2.1.0 and `gym==0.21.0` which is becoming increasingly difficult to install. We host the unrestricted MuJoCo 2.1.0 license (courtesy of Google DeepMind) at [https://www.tdmpc2.com/files/mjkey.txt](https://www.tdmpc2.com/files/mjkey.txt). You can download the license by running
 
-### Note:
-1. If you find it difficult to install `mujoco-py` and `d4rl` then you can refer to their installation in the colab notebook
-2. Once the dataset is formatted and saved with `download_d4rl_datasets.py`, `d4rl` library is not required further for training.
-3. The evaluation is done on `v3` control environments in `mujoco-py` so that the results are consistent with the decision transformer paper.
+```
+wget https://www.tdmpc2.com/files/mjkey.txt -O ~/.mujoco/mjkey.txt
+```
 
+Depending on your existing system packages, you may need to install other dependencies. See `docker/Dockerfile` for a list of recommended system packages.
 
-## Citing
+----
 
-Please use this bibtex if you want to cite this repository in your publications:
+## Supported tasks
 
-    @misc{minimal_decision_transformer,
-        author = {Barhate, Nikhil},
-        title = {Minimal Implementation of Decision Transformer},
-        year = {2022},
-        publisher = {GitHub},
-        journal = {GitHub repository},
-        howpublished = {\url{https://github.com/nikhilbarhate99/min-decision-transformer}},
-    }
+This codebase provides support for all **104** continuous control tasks from **DMControl**, **Meta-World**, **ManiSkill2**, and **MyoSuite** used in our paper. Specifically, it supports 39 tasks from DMControl (including 11 custom tasks), 50 tasks from Meta-World, 5 tasks from ManiSkill2, and 10 tasks from MyoSuite, and covers all tasks used in the paper. See below table for expected name formatting for each task domain:
 
+| domain | task
+| --- | --- |
+| dmcontrol | dog-run
+| dmcontrol | cheetah-run-backwards
+| metaworld | mw-assembly
+| metaworld | mw-pick-place-wall
+| maniskill | pick-cube
+| maniskill | pick-ycb
+| myosuite  | myo-key-turn
+| myosuite  | myo-key-turn-hard
 
+which can be run by specifying the `task` argument for `evaluation.py`. Multi-task training and evaluation is specified by setting `task=mt80` or `task=mt30` for the 80-task and 30-task sets, respectively. While you generally do not need to access the underlying task IDs or embeddings during training or evaluation of our multi-task models, the mapping from task name to task embedding used in our work can be found [here](https://github.com/nicklashansen/tdmpc2/blob/7ec6bc83a82a5188ca3faddc59aea83f430ab570/tdmpc2/common/__init__.py#L26). As of April 2025, our codebase also provides basic support for other MuJoCo/Box2d Gymnasium tasks; refer to the `envs` directory for a list of tasks. It should be relatively straightforward to add support for custom tasks by following the examples in `envs`.
 
-## References
+**Note:** we also provide support for image observations in the DMControl tasks. Use argument `obs=rgb` if you wish to train visual policies.
 
-- Official [code](https://github.com/kzl/decision-transformer) and [paper](https://arxiv.org/abs/2106.01345)
-- Minimal GPT (causal transformer) [tweet](https://twitter.com/MishaLaskin/status/1481767788775628801?cxt=HHwWgoCzmYD9pZApAAAA) and [colab notebook](https://colab.research.google.com/drive/1NUBqyboDcGte5qAJKOl8gaJC28V_73Iv?usp=sharing)
+## Repository Layout (new pieces)
+
+Key additions on top of the original `tdmpc2` code:
+
+- `tdmpc2/agent.py`
+  - Speculative execution logic
+  - Plan buffers, mismatch computation, fallback to TD-MPC2
+  - Integration with corrector
+
+- `tdmpc2/corrector.py`
+  - `BaseCorrector`
+  - `TwoTowerCorrector`
+  - `TemporalTransformerCorrector`
+
+- `scripts/collect_corrector_data.py`
+  - Run TD-MPC2 as teacher
+  - Collect distillation tuples for the corrector
+
+- `scripts/train_corrector.py`
+  - Train corrector offline on the collected dataset
+
+- `scripts/eval_corrector.py`
+  - Evaluate baseline, naive 3-step, 3-step+corrector, 6-step+corrector
+  - Compare corrector architectures
