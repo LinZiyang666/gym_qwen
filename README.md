@@ -155,7 +155,7 @@ Metrics are printed to stdout; optionally save JSON metrics with `--output_metri
 
 -----
 
-## 9. Distributed Multi-GPU Training (DDP)
+## Distributed Multi-GPU Training (DDP)
 Use the provided DDP tooling to scale TD-MPC2 training across multiple GPUs:
 
 - Quick-start shell script (8 GPUs by default):
@@ -173,6 +173,9 @@ Use the provided DDP tooling to scale TD-MPC2 training across multiple GPUs:
   cd tdmpc2
   python train_ddp.py --config-name=config_ddp
   ```
+
+  See `tdmpc2/DDP_TRAINING_README.md` for detailed guidance on parameters like `world_size`, `sync_freq`, and troubleshooting tips. Rank 0 handles logging and checkpoints; checkpoints remain loadable for single- or multi-GPU use.
+  
 -----
 
 ## Reproducibility and Logging
