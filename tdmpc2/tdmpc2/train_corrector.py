@@ -80,6 +80,9 @@ def load_tensor_dict(path: Path, device: torch.device) -> Dict[str, torch.Tensor
     if isinstance(state, list):
         raise ValueError("Expected a dict of tensors in the dataset file.")
 
+    for meta_key in ("model_id", "model_name", "model_size"):
+        state.pop(meta_key, None)
+
     required = {"z_real", "z_pred", "a_teacher"}
     missing = required - set(state.keys())
     if missing:
@@ -228,6 +231,8 @@ def train_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
                 "corrector": state,
                 "corrector_type": args.corrector_type,
                 "model_id": getattr(args, "model_id", None),
+                "model_name": getattr(args, "model_name", None),
+                "model_size": getattr(args, "model_size", None),
             },
             args.save_path,
         )
@@ -249,6 +254,8 @@ def train_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
             "filter_min_distance": args.filter_min_distance,
             "dataset_path": args.data,
             "model_id": getattr(args, "model_id", None),
+            "model_name": getattr(args, "model_name", None),
+            "model_size": getattr(args, "model_size", None),
             "seed": args.seed,
         }
         with open(base + "_metrics.json", "w", encoding="utf-8") as f:
@@ -281,7 +288,9 @@ def main() -> None:
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing per-model datasets")
     parser.add_argument("--checkpoint_dir", type=str, default="tdmpc2_pretrained", help="Directory containing pretrained TD-MPC2 checkpoints")
     parser.add_argument("--model_id", type=str, default=None, help="Model id (checkpoint stem) to train for")
+    parser.add_argument("--model_size", type=str, default=None, help="Filter checkpoints by size token (e.g., 5m)")
     parser.add_argument("--all_models", action="store_true", help="Train correctors for every checkpoint discovered")
+    parser.add_argument("--all_model_sizes", action="store_true", help="Alias for --all_models")
     parser.add_argument(
         "--save_path", type=str, default="corrector.pth", help="Output path for trained weights (single run)",
     )
@@ -318,30 +327,44 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.all_models or args.model_id:
-        ckpts = list_pretrained_checkpoints(args.checkpoint_dir, exclude_patterns=args.exclude_pattern)
-        if args.all_models:
-            target_models = list(ckpts.keys())
-        else:
-            if args.model_id not in ckpts:
+    if args.all_model_sizes:
+        args.all_models = True
+
+    target_models: List[tuple[str, Dict[str, str] | None]]
+    ckpt_infos: Dict[str, Dict[str, str]] = {}
+    if args.all_models or args.model_id or args.model_size:
+        ckpt_infos = list_pretrained_checkpoints(
+            args.checkpoint_dir, model_size_filter=args.model_size
+        )
+        if not ckpt_infos:
+            raise ValueError(f"No checkpoints found in {args.checkpoint_dir} matching filters.")
+        if args.model_id:
+            if args.model_id not in ckpt_infos:
                 raise ValueError(
-                    f"Model id '{args.model_id}' not found in {args.checkpoint_dir}. Available: {list(ckpts.keys())}"
+                    f"Model id '{args.model_id}' not found in {args.checkpoint_dir}. Available: {list(ckpt_infos.keys())}"
                 )
-            target_models = [args.model_id]
+            target_models = [(args.model_id, ckpt_infos[args.model_id])]
+        else:
+            target_models = list(ckpt_infos.items())
     elif args.data is None:
-        target_models = discover_dataset_ids(args.data_dir)
-        if not target_models:
+        ids = discover_dataset_ids(args.data_dir)
+        if not ids:
             raise ValueError("No datasets found; specify --data or ensure data_dir has corrector_data_<model_id>.pt")
+        target_models = [(mid, None) for mid in ids]
     else:
-        target_models = [Path(args.data).stem.replace("corrector_data_", "") or None]
+        target_models = [(Path(args.data).stem.replace("corrector_data_", "") or None, None)]
 
     target_types = ["two_tower", "temporal"] if args.corrector_type == "both" else [args.corrector_type]
 
-    for model_id in target_models:
+    for model_id, info in target_models:
+        model_name = info.get("model_name") if info else None
+        model_size = info.get("model_size") if info else None
         for corr_type in target_types:
             run_args = copy.deepcopy(args)
             run_args.corrector_type = corr_type
             run_args.model_id = model_id
+            run_args.model_name = model_name
+            run_args.model_size = model_size
             if args.data is None:
                 if model_id is None:
                     raise ValueError("Dataset path (--data) required when model_id is not provided.")
@@ -352,7 +375,10 @@ def main() -> None:
                 run_args.save_path = os.path.join(
                     args.corrector_dir, f"corrector{suffix}_{corr_type}.pth"
                 )
-            print(f"Training corrector type={corr_type} for model_id={model_id or 'dataset'} using {run_args.data}")
+            name_size = f" ({model_name}-{model_size})" if model_name or model_size else ""
+            print(
+                f"Training corrector type={corr_type} for model_id={model_id or 'dataset'}{name_size} using {run_args.data}"
+            )
             launch(run_args, train_worker, use_ddp=True, allow_dataparallel=True)
 
 

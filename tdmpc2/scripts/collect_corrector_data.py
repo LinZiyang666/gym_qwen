@@ -117,7 +117,13 @@ def pad_history(history: deque, target_len: int, feat_dim: int) -> torch.Tensor:
     return torch.stack(padded, dim=0)
 
 
-def collect_for_agent(agent: TDMPC2, cfg: Any, args: argparse.Namespace, output_path: str) -> None:
+def collect_for_agent(
+    agent: TDMPC2,
+    cfg: Any,
+    args: argparse.Namespace,
+    output_path: str,
+    model_meta: Optional[Dict[str, str]] = None,
+) -> None:
     buffer = CorrectorDataset()
     max_samples = args.max_samples if args.max_samples and args.max_samples > 0 else None
     history = deque(maxlen=args.history_len)
@@ -189,15 +195,31 @@ def collect_for_agent(agent: TDMPC2, cfg: Any, args: argparse.Namespace, output_
     output_dir = os.path.dirname(output_path) or "."
     os.makedirs(output_dir, exist_ok=True)
     data = buffer.to_tensor_dict(device="cpu")
+    if model_meta:
+        data.update(
+            {
+                "model_id": model_meta.get("model_id"),
+                "model_name": model_meta.get("model_name"),
+                "model_size": model_meta.get("model_size"),
+            }
+        )
     torch.save(data, output_path)
     elapsed = time.time() - start_time
     steps_per_sec = total_steps / max(elapsed, 1e-6)
-    print(f"Saved {len(buffer)} samples to {output_path} ({steps_per_sec:.1f} env steps/sec)")
+    meta_str = ""
+    if model_meta:
+        meta_str = (
+            f" [model_id={model_meta.get('model_id')}, name={model_meta.get('model_name')}, "
+            f"size={model_meta.get('model_size')}]"
+        )
+    print(f"Saved {len(buffer)} samples to {output_path}{meta_str} ({steps_per_sec:.1f} env steps/sec)")
 
 
-def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, str]]:
-    ckpts = list_pretrained_checkpoints(args.checkpoint_dir, exclude_patterns=args.exclude_pattern)
-    if args.all_models or (not args.model_id and not args.checkpoint):
+def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, Dict[str, str]]]:
+    ckpts = list_pretrained_checkpoints(
+        args.checkpoint_dir, model_size_filter=args.model_size
+    )
+    if args.all_models or args.all_model_sizes or (not args.model_id and not args.checkpoint):
         if not ckpts:
             raise ValueError(f"No checkpoints found in {args.checkpoint_dir}")
         return ckpts.items()
@@ -209,11 +231,20 @@ def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, str]]:
         return [(args.model_id, ckpts[args.model_id])]
     if args.checkpoint:
         model_id = Path(args.checkpoint).stem
-        return [(model_id, args.checkpoint)]
-    raise ValueError("Provide --model_id, --all_models, or --checkpoint for manual path.")
+        parts = model_id.split("-")
+        model_name, model_size = (parts[0], parts[1]) if len(parts) == 2 else (model_id, "")
+        return [
+            (
+                model_id,
+                {"path": args.checkpoint, "model_name": model_name, "model_size": model_size},
+            )
+        ]
+    raise ValueError("Provide --model_id, --all_models/--all_model_sizes, or --checkpoint for manual path.")
 
 
-def _load_agent_for_model(model_id: str, ckpt_path: str, args: argparse.Namespace, device: torch.device):
+def _load_agent_for_model(
+    model_id: str, ckpt_path: str, args: argparse.Namespace, device: torch.device
+):
     spec_overrides = {"spec_enabled": False, "speculate": False}
     agent, cfg, _ = load_pretrained_tdmpc2(
         model_id,
@@ -231,32 +262,50 @@ def main(args: argparse.Namespace) -> None:
     use_gpu = torch.cuda.is_available() and not args.device.startswith("cpu")
     device = torch.device("cuda" if use_gpu else "cpu")
 
-    for model_id, ckpt_path in _resolve_models(args):
+    for model_id, info in _resolve_models(args):
+        ckpt_path = info["path"]
+        model_name = info.get("model_name", "")
+        model_size = info.get("model_size", "")
         agent, cfg = _load_agent_for_model(model_id, ckpt_path, args, device)
-        out_path = args.output
-        if args.all_models or (args.model_id and args.output == DEFAULT_OUTPUT) or not args.model_id:
-            base_dir = os.path.dirname(args.output) or os.path.dirname(DEFAULT_OUTPUT) or "data"
-            filename = f"corrector_data_{model_id}.pt"
-            out_path = os.path.join(base_dir, filename)
-        print(f"[collect_corrector_data] model_id={model_id} checkpoint={ckpt_path}")
-        collect_for_agent(agent, cfg, args, out_path)
+        output_base = Path(args.output)
+        treat_as_dir = output_base.is_dir() or output_base.suffix == ""
+        if treat_as_dir or args.all_models or args.all_model_sizes:
+            base_dir = output_base if treat_as_dir else output_base.parent
+            if str(base_dir) == "":
+                base_dir = Path("data")
+            base_dir.mkdir(parents=True, exist_ok=True)
+            out_path = base_dir / f"corrector_data_{model_id}.pt"
+        else:
+            out_path = output_base
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        print(
+            f"[collect_corrector_data] model_id={model_id} name={model_name} size={model_size} checkpoint={ckpt_path}"
+        )
+        collect_for_agent(
+            agent,
+            cfg,
+            args,
+            str(out_path),
+            model_meta={
+                "model_id": model_id,
+                "model_name": model_name,
+                "model_size": model_size,
+            },
+        )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", "--env", dest="task", type=str, help="Task name / env id", required=False)
     parser.add_argument("--checkpoint", type=str, required=False, default=None, help="Manual TD-MPC2 checkpoint path")
-    parser.add_argument("--checkpoint_dir", type=str, default="tdmpc2_pretrained", help="Directory containing pretrained checkpoints")
+    parser.add_argument(
+        "--checkpoint_dir", type=str, default="tdmpc2_pretrained", help="Directory containing pretrained checkpoints"
+    )
     parser.add_argument("--model_dir", dest="checkpoint_dir", type=str, default=None, help="Alias for --checkpoint_dir")
     parser.add_argument("--model_id", type=str, default=None, help="Model id (checkpoint stem) to load")
-    parser.add_argument("--model_size", dest="model_id", type=str, help="Alias for --model_id")
+    parser.add_argument("--model_size", type=str, default=None, help="Filter checkpoints by size token (e.g., 5m)")
     parser.add_argument("--all_models", action="store_true", help="Iterate over all checkpoints in checkpoint_dir")
     parser.add_argument("--all_model_sizes", action="store_true", help="Alias for --all_models")
-    parser.add_argument(
-        "--exclude_pattern",
-        action="append",
-        help="Optional substring(s) to skip when discovering checkpoints",
-    )
     parser.add_argument("--episodes", type=int, default=20, help="Number of episodes to collect")
     parser.add_argument("--max_steps", type=int, default=None, help="Max steps per episode")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")

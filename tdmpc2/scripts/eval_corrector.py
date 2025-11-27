@@ -37,9 +37,11 @@ EVAL_VARIANTS = [
 ]
 
 
-def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, str]]:
-    ckpts = list_pretrained_checkpoints(args.checkpoint_dir, exclude_patterns=args.exclude_pattern)
-    if args.all_models or not args.model_id:
+def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, Dict[str, str]]]:
+    ckpts = list_pretrained_checkpoints(
+        args.checkpoint_dir, model_size_filter=args.model_size
+    )
+    if args.all_models or args.all_model_sizes or not args.model_id:
         if not ckpts:
             raise ValueError(f"No pretrained checkpoints found in {args.checkpoint_dir}")
         return ckpts.items()
@@ -177,7 +179,10 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
     set_seed(args.seed)
     results: List[Dict[str, Any]] = []
 
-    for model_id, ckpt_path in _resolve_models(args):
+    for model_id, info in _resolve_models(args):
+        ckpt_path = info["path"]
+        model_name = info.get("model_name", "")
+        model_size = info.get("model_size", "")
         for variant in EVAL_VARIANTS:
             corr_type = variant["corrector_type"]
             agent, cfg, _, corrector_ckpt = _build_agent(model_id, ckpt_path, variant, args)
@@ -192,6 +197,8 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
                 "task": args.task or cfg.task,
                 "variant": variant["name"],
                 "model_id": model_id,
+                "model_name": model_name,
+                "model_size": model_size,
                 "corrector_type": corr_type,
                 "exec_horizon": variant["exec_horizon"],
                 "episodes": args.episodes,
@@ -218,12 +225,38 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
     else:
         print("No results produced; check configuration.")
 
+    if results and args.output_plot:
+        try:
+            import matplotlib.pyplot as plt
+            import pandas as pd
+
+            df = pd.DataFrame(results)
+            df["corrector_label"] = df["corrector_type"].fillna("none")
+            grouped = df.groupby(["corrector_label", "exec_horizon"])["mean_return"].mean().unstack(fill_value=0)
+            horizons = grouped.columns.tolist()
+            plt.figure(figsize=(8, 5))
+            for corr_type, row in grouped.iterrows():
+                plt.plot(horizons, row.values, marker="o", label=corr_type)
+            plt.xlabel("Execution horizon (steps)")
+            plt.ylabel("Mean return (avg across models)")
+            plt.title("Performance vs execution horizon")
+            plt.grid(True, linestyle="--", alpha=0.5)
+            plt.legend(title="Corrector")
+            Path(args.output_plot).parent.mkdir(parents=True, exist_ok=True)
+            plt.tight_layout()
+            plt.savefig(args.output_plot, dpi=200)
+            print(f"Saved aggregate plot to {args.output_plot}")
+        except Exception as exc:  # pragma: no cover - plotting optional
+            print(f"Failed to generate aggregate plot: {exc}")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", "--env", dest="task", type=str, help="Task name / env id", required=False)
     parser.add_argument("--model_id", type=str, default=None, help="Checkpoint stem to evaluate (e.g., tdmpc2_19m)")
+    parser.add_argument("--model_size", type=str, default=None, help="Filter checkpoints by size token (e.g., 5m)")
     parser.add_argument("--all_models", action="store_true", help="Evaluate every checkpoint discovered in checkpoint_dir")
+    parser.add_argument("--all_model_sizes", action="store_true", help="Alias for --all_models")
     parser.add_argument("--checkpoint_dir", type=str, default="tdmpc2_pretrained", help="Directory with pretrained models")
     parser.add_argument("--corrector_dir", type=str, default="correctors", help="Directory containing trained correctors")
     parser.add_argument("--corrector_checkpoint", type=str, default=None, help="Override corrector checkpoint path")
@@ -242,16 +275,22 @@ def parse_args() -> argparse.Namespace:
         help="Directory to save per-run evaluation metrics (JSON/CSV).",
     )
     parser.add_argument("--results_csv", type=str, default="results/corrector_eval/summary.csv")
+    parser.add_argument("--output_csv", dest="results_csv", type=str, help="Alias for --results_csv")
+    parser.add_argument(
+        "--output_plot",
+        type=str,
+        default=None,
+        help="Optional path to save a quick aggregate horizon plot (uses aggregated CSV).",
+    )
+    parser.add_argument("--results_csv", type=str, default="results/corrector_eval/summary.csv")
     parser.add_argument(
         "--gpus", type=str, default="1", help="GPU selection: 'all', N, or comma-separated list",
-    )
-    parser.add_argument(
-        "--exclude_pattern",
-        action="append",
-        help="Optional substring(s) to skip when discovering checkpoints",
     )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    launch(parse_args(), main_worker, use_ddp=False, allow_dataparallel=True)
+    _args = parse_args()
+    if _args.all_model_sizes:
+        _args.all_models = True
+    launch(_args, main_worker, use_ddp=False, allow_dataparallel=True)

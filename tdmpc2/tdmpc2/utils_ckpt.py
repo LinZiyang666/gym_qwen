@@ -16,25 +16,38 @@ from tdmpc2.common.seed import set_seed
 def list_pretrained_checkpoints(
     checkpoint_dir: str = "tdmpc2_pretrained",
     extensions: List[str] | Tuple[str, ...] = (".pt", ".pth", ".ckpt"),
-    exclude_patterns: Optional[List[str]] = None,
-) -> Dict[str, str]:
-    """Return a mapping from ``model_id`` to absolute checkpoint path.
+    model_size_filter: Optional[str] = None,
+) -> Dict[str, Dict[str, str]]:
+    """Discover pretrained checkpoints and parse model metadata from filenames.
 
-    ``model_id`` is defined as the filename stem (basename without extension).
-    Files are discovered by extension; optional ``exclude_patterns`` can drop
-    any filename containing a given substring.
+    Expected filename pattern: ``<model_name>-<model_size>.pt`` (stem used as
+    ``model_id``). The returned mapping is:
+
+    ``model_id -> {"path": path, "model_name": model_name, "model_size": model_size}``
+
+    ``model_size_filter`` performs a case-insensitive exact match on the
+    ``model_size`` field when provided.
     """
 
-    checkpoint_paths: Dict[str, str] = {}
+    checkpoints: Dict[str, Dict[str, str]] = {}
     root = Path(checkpoint_dir)
     for path in root.glob("*"):
         if not path.is_file() or path.suffix.lower() not in extensions:
             continue
-        name = path.name
-        if exclude_patterns and any(pat in name for pat in exclude_patterns):
+        stem = path.stem
+        parts = stem.split("-")
+        if len(parts) == 2:
+            model_name, model_size = parts[0], parts[1]
+        else:
+            model_name, model_size = stem, ""
+        if model_size_filter is not None and model_size.lower() != model_size_filter.lower():
             continue
-        checkpoint_paths[path.stem] = str(path)
-    return dict(sorted(checkpoint_paths.items()))
+        checkpoints[stem] = {
+            "path": str(path),
+            "model_name": model_name,
+            "model_size": model_size,
+        }
+    return dict(sorted(checkpoints.items()))
 
 
 def _infer_task_from_metadata(metadata: Dict, fallback: Optional[str]) -> Optional[str]:
