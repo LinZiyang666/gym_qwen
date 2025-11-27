@@ -21,7 +21,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from tdmpc2.common.seed import set_seed  # noqa: E402
-from envs import make_env  # noqa: E402
+from tdmpc2.envs import make_env  # noqa: E402
 from tdmpc2 import TDMPC2  # noqa: E402
 from tdmpc2.launch import launch, wrap_dataparallel  # noqa: E402
 from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2  # noqa: E402

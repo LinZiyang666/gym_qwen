@@ -29,7 +29,7 @@ DEFAULT_OUTPUT = "data/corrector_data.pt"
 
 from tdmpc2.common.parser import parse_cfg  # noqa: E402
 from tdmpc2.common.seed import set_seed  # noqa: E402
-from envs import make_env  # noqa: E402
+from tdmpc2.envs import make_env  # noqa: E402
 from tdmpc2 import TDMPC2  # noqa: E402
 from tdmpc2.launch import launch, wrap_dataparallel
 from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2  # noqa: E402
