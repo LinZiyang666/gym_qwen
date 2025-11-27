@@ -103,27 +103,27 @@ def train_worker(rank, cfg):
 		print(colored('World size:', 'yellow', attrs=['bold']), cfg.world_size)
 		print(colored('Sync frequency:', 'yellow', attrs=['bold']), getattr(cfg, 'sync_freq', 1))
 
-        try:
-                # Create environment (each process has its own environment)
-                env = make_env(cfg)
+	try:
+		# Create environment (each process has its own environment)
+		env = make_env(cfg)
 
-                # Ensure all ranks share identical environment-derived config
-                env_cfg = {
-                        "obs_shape": getattr(cfg, "obs_shape", None),
-                        "obs_shapes": getattr(cfg, "obs_shapes", None),
-                        "action_dim": getattr(cfg, "action_dim", None),
-                        "action_dims": getattr(cfg, "action_dims", None),
-                        "episode_length": getattr(cfg, "episode_length", None),
-                        "episode_lengths": getattr(cfg, "episode_lengths", None),
-                        "seed_steps": getattr(cfg, "seed_steps", None),
-                }
-                env_cfg_list = [env_cfg]
-                dist.broadcast_object_list(env_cfg_list, src=0)
-                for k, v in env_cfg_list[0].items():
-                        setattr(cfg, k, v)
+		# Ensure all ranks share identical environment-derived config
+		env_cfg = {
+			"obs_shape": getattr(cfg, "obs_shape", None),
+			"obs_shapes": getattr(cfg, "obs_shapes", None),
+			"action_dim": getattr(cfg, "action_dim", None),
+			"action_dims": getattr(cfg, "action_dims", None),
+			"episode_length": getattr(cfg, "episode_length", None),
+			"episode_lengths": getattr(cfg, "episode_lengths", None),
+			"seed_steps": getattr(cfg, "seed_steps", None),
+		}
+		env_cfg_list = [env_cfg]
+		dist.broadcast_object_list(env_cfg_list, src=0)
+		for k, v in env_cfg_list[0].items():
+			setattr(cfg, k, v)
 
-                # Create agent with DDP wrapper
-                agent = TDMPC2_DDP(cfg)
+		# Create agent with DDP wrapper
+		agent = TDMPC2_DDP(cfg)
 
 		# Create buffer (each process has its own buffer)
 		buffer = Buffer(cfg)
