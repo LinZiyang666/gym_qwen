@@ -1,4 +1,8 @@
 import argparse
+import csv
+import datetime
+import json
+import os
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -154,45 +158,92 @@ def train_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
     optim = torch.optim.Adam(corrector.parameters(), lr=args.lr)
 
     global_start = time.time()
+    history = {"epoch": [], "train_loss": [], "train_mse": [], "train_delta_norm": []}
     for epoch in range(args.epochs):
         if sampler is not None:
             sampler.set_epoch(epoch)
         total_loss = 0.0
+        total_mse = 0.0
+        total_delta_norm = 0.0
         count = 0
         epoch_start = time.time()
         for batch in loader:
-            z_real, z_pred, a_plan, a_teacher, history = batch
+            z_real, z_pred, a_plan, a_teacher, hist_feats = batch
             z_real = z_real.to(device, non_blocking=True)
             z_pred = z_pred.to(device, non_blocking=True)
             a_plan = a_plan.to(device, non_blocking=True)
             a_teacher = a_teacher.to(device, non_blocking=True)
             if args.corrector_type == "temporal":
-                if history.numel() == 0:
+                if hist_feats.numel() == 0:
                     raise ValueError(
                         "Temporal corrector requires 'history_feats' in the dataset; received empty history."
                     )
-                mismatch_history = history.to(device, non_blocking=True)
+                mismatch_history = hist_feats.to(device, non_blocking=True)
             else:
                 mismatch_history = None
             optim.zero_grad()
             a_corr = corrector(z_real, z_pred, a_plan, mismatch_history=mismatch_history)
+            mse = torch.nn.functional.mse_loss(a_corr, a_teacher)
+            delta_norm = (a_corr - a_plan).norm(dim=-1).mean()
             loss = corrector_loss(a_corr, a_teacher, a_plan, reg_lambda=args.reg_lambda)
             loss.backward()
             optim.step()
             total_loss += loss.item() * z_real.shape[0]
+            total_mse += mse.item() * z_real.shape[0]
+            total_delta_norm += delta_norm.item() * z_real.shape[0]
             count += z_real.shape[0]
         if rank == 0:
             avg_loss = total_loss / max(count, 1)
+            avg_mse = total_mse / max(count, 1)
+            avg_norm = total_delta_norm / max(count, 1)
+            history["epoch"].append(epoch + 1)
+            history["train_loss"].append(avg_loss)
+            history["train_mse"].append(avg_mse)
+            history["train_delta_norm"].append(avg_norm)
             elapsed = time.time() - epoch_start
             samples_per_sec = count / max(elapsed, 1e-6)
             print(
-                f"Epoch {epoch+1}/{args.epochs} - loss: {avg_loss:.4f} - "
+                f"Epoch {epoch+1}/{args.epochs} - loss: {avg_loss:.4f} - mse: {avg_mse:.4f} - "
+                f"delta_norm: {avg_norm:.4f} - "
                 f"samples/sec: {samples_per_sec:.1f}"
             )
 
     if rank == 0:
         state = corrector.module.state_dict() if hasattr(corrector, "module") else corrector.state_dict()
         torch.save({"corrector": state, "corrector_type": args.corrector_type}, args.save_path)
+        os.makedirs(args.results_dir, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_id_parts = [f"{args.corrector_type}", f"bs{args.batch_size}", f"lr{args.lr}"]
+        if getattr(args, "seed", None) is not None:
+            run_id_parts.append(f"seed{args.seed}")
+        run_id = "_".join(run_id_parts)
+        base = os.path.join(args.results_dir, f"{run_id}_{ts}")
+        meta = {
+            "corrector_type": args.corrector_type,
+            "latent_dim": latent_dim,
+            "act_dim": act_dim,
+            "batch_size": args.batch_size,
+            "epochs": args.epochs,
+            "lr": args.lr,
+            "lambda_reg": args.reg_lambda,
+            "filter_min_distance": args.filter_min_distance,
+            "dataset_path": args.data,
+            "seed": args.seed,
+        }
+        with open(base + "_metrics.json", "w", encoding="utf-8") as f:
+            json.dump({"meta": meta, "history": history}, f, indent=2)
+        with open(base + "_metrics.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["epoch", "train_loss", "train_mse", "train_delta_norm"])
+            for i in range(len(history["epoch"])):
+                writer.writerow(
+                    [
+                        history["epoch"][i],
+                        history["train_loss"][i],
+                        history["train_mse"][i],
+                        history["train_delta_norm"][i],
+                    ]
+                )
         total_time = time.time() - global_start
         print(
             f"Saved trained corrector to {args.save_path} after {args.epochs} epochs "
@@ -214,6 +265,13 @@ def main() -> None:
     parser.add_argument("--reg_lambda", type=float, default=0.0, help="Residual L2 regularization weight")
     parser.add_argument("--filter_min_distance", type=float, default=0.0, help="Minimum distance to keep a sample")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--results_dir",
+        type=str,
+        default="results/corrector_train",
+        help="Directory where training metrics will be saved (JSON + CSV).",
+    )
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--corrector_type", type=str, default="two_tower", choices=["two_tower", "temporal"])
     parser.add_argument("--hidden_dim", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=2)

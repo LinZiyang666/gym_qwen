@@ -3,10 +3,10 @@ import torch.nn.functional as F
 from collections import deque
 from typing import List, Optional, Tuple
 
-from common import math
-from common.scale import RunningScale
-from common.world_model import WorldModel
-from common.layers import api_model_conversion
+from tdmpc2.common import math
+from tdmpc2.common.scale import RunningScale
+from tdmpc2.common.world_model import WorldModel
+from tdmpc2.common.layers import api_model_conversion
 from tensordict import TensorDict
 from .speculative_manager import SpeculativeManager
 from .corrector import build_corrector_from_cfg, corrector_loss
@@ -60,6 +60,8 @@ class TDMPC2(torch.nn.Module):
         self.plan_step_idx = 0
         self.steps_until_replan = 0
         self.mismatch_history: deque = deque(maxlen=self.spec_history_len)
+        self.episode_replans = 0
+        self.episode_corrector_steps = 0
         self._act_steps = 0
         self.corrector = None
         self.corrector_buffer = None
@@ -160,6 +162,8 @@ class TDMPC2(torch.nn.Module):
             self.plan_step_idx = 0
             self.steps_until_replan = 0
             self.mismatch_history.clear()
+            self.episode_replans = 0
+            self.episode_corrector_steps = 0
             if self.corrector_buffer is not None:
                 self.corrector_buffer.reset()
         z_t = self.model.encode(obs_tensor, task)
@@ -240,6 +244,8 @@ class TDMPC2(torch.nn.Module):
                 return selected_action.cpu(), info
             return selected_action.cpu()
 
+        if return_info:
+            return selected_action.cpu(), None
         return selected_action.cpu()
 
     def _act_speculative(self, obs_tensor: torch.Tensor, z_t: torch.Tensor, task, eval_mode: bool):
@@ -252,6 +258,7 @@ class TDMPC2(torch.nn.Module):
         dist = torch.norm(z_t.squeeze(0) - z_pred_t.squeeze(0))
         miss = dist > self.spec_mismatch_threshold
 
+        used_corrector = False
         if miss:
             action = self.plan(obs_tensor, t0=False, eval_mode=eval_mode, task=task)
             self._compute_spec_plan(z_t, task)
@@ -261,6 +268,7 @@ class TDMPC2(torch.nn.Module):
                 action = self.corrector(
                     z_t, z_pred_t.to(self.device), a_plan_t.to(self.device), mismatch_history=mismatch_hist_tensor
                 )
+                used_corrector = True
             else:
                 action = a_plan_t
 
@@ -269,6 +277,9 @@ class TDMPC2(torch.nn.Module):
             dim=-1,
         )
         self.mismatch_history.append(feature)
+
+        if not miss and used_corrector:
+            self.episode_corrector_steps += 1
 
         self.plan_step_idx += 1
         self.steps_until_replan = max(self.steps_until_replan - 1, 0)
@@ -288,6 +299,7 @@ class TDMPC2(torch.nn.Module):
             "distance": float(dist.item()),
             "miss_flag": int(miss),
             "accepted": not miss,
+            "used_corrector": bool(not miss and used_corrector),
         }
         return action, info
 
@@ -300,6 +312,7 @@ class TDMPC2(torch.nn.Module):
             self.current_plan_latents.append(next_z.squeeze(0))
         self.plan_step_idx = 0
         self.steps_until_replan = self.spec_exec_horizon
+        self.episode_replans += 1
 
     def _stack_mismatch_history(self) -> Optional[torch.Tensor]:
         if not self.mismatch_history:
