@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
 from torch.func import functional_call, stack_module_state
+from tensordict import TensorDictBase
 
 
 class Ensemble(nn.Module):
@@ -216,26 +217,42 @@ def api_model_conversion(target_state_dict, source_state_dict):
     def is_metadata(key: str) -> bool:
         return "__batch_size" in key or "__device" in key
 
+    def _flatten(prefix: str, obj):
+        if isinstance(obj, (TensorDictBase, dict)):
+            flat = {}
+            for sub_key, sub_val in obj.items():
+                next_prefix = f"{prefix}.{sub_key}" if prefix else str(sub_key)
+                flat.update(_flatten(next_prefix, sub_val))
+            return flat
+        return {prefix: obj}
+
+    expanded_state_dict = {}
+    for key, val in source_state_dict.items():
+        if isinstance(val, (TensorDictBase, dict)):
+            expanded_state_dict.update(_flatten(key, val))
+        else:
+            expanded_state_dict[key] = val
+
     # rename keys
-    for key, val in list(source_state_dict.items()):
+    for key, val in list(expanded_state_dict.items()):
         if key.startswith('_Qs.'):
-            num = key[len('_Qs.params.'):]
+            num = key[len('_Qs.params.') :]
             new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
             for prefix in ("_Qs.params.", "_detach_Qs_params."):
                 candidate_key = prefix + new_key
                 if candidate_key in target_state_dict and not is_metadata(candidate_key):
                     new_state_dict[candidate_key] = val
-            del source_state_dict[key]
+            del expanded_state_dict[key]
         elif key.startswith('_target_Qs.'):
-            num = key[len('_target_Qs.params.'):]
+            num = key[len('_target_Qs.params.') :]
             new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
             candidate_key = "_target_Qs_params." + new_key
             if candidate_key in target_state_dict and not is_metadata(candidate_key):
                 new_state_dict[candidate_key] = val
-            del source_state_dict[key]
+            del expanded_state_dict[key]
 
     # copy remaining parameters that directly match the target model
-    for key, val in source_state_dict.items():
+    for key, val in expanded_state_dict.items():
         if key in target_state_dict and not is_metadata(key):
             new_state_dict[key] = val
 
