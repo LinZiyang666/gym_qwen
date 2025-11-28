@@ -79,7 +79,7 @@ def load_tensor_dict(path: Path, device: torch.device) -> Dict[str, torch.Tensor
     if isinstance(state, list):
         raise ValueError("Expected a dict of tensors in the dataset file.")
 
-    for meta_key in ("model_id", "model_name", "model_size"):
+    for meta_key in ("model_id", "model_name", "model_size", "task_set"):
         state.pop(meta_key, None)
 
     required = {"z_real", "z_pred", "a_teacher"}
@@ -265,6 +265,13 @@ def main() -> None:
     parser.add_argument("--model_size", type=str, default=None, help="Filter checkpoints by size token (e.g., 5m)")
     parser.add_argument("--all_models", action="store_true", help="Train correctors for every checkpoint discovered")
     parser.add_argument("--all_model_sizes", action="store_true", help="Alias for --all_models")
+    parser.add_argument(
+        "--collection_mode",
+        type=str,
+        default="multi",
+        choices=["single", "multi"],
+        help="single: expect single-task datasets; multi: use multi-task buffers and metadata.",
+    )
     parser.add_argument(
         "--save_path", type=str, default="corrector.pth", help="Output path for trained weights (single run)",
     )
