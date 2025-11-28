@@ -201,4 +201,30 @@ def populate_env_dims(cfg):
         else:
             cfg.action_dim = int(env.action_space.shape[0])
 
+    tasks = getattr(cfg, "tasks", None)
+    num_tasks_for_dims = 1
+    flat_tasks = []
+    if tasks is not None:
+        if isinstance(tasks, (list, tuple)):
+            for t in tasks:
+                if isinstance(t, (list, tuple)):
+                    flat_tasks.extend(t)
+                else:
+                    flat_tasks.append(t)
+        else:
+            flat_tasks = [tasks]
+
+        flat_tasks = [t for t in flat_tasks if isinstance(t, str)]
+        if flat_tasks:
+            num_tasks_for_dims = len(flat_tasks)
+
+    cfg.action_dim = int(cfg.action_dim)
+
+    if (
+        not hasattr(cfg, "action_dims")
+        or isinstance(cfg.action_dims, str)
+        or getattr(cfg, "action_dims", None) == "???"
+    ):
+        cfg.action_dims = [cfg.action_dim] * num_tasks_for_dims
+
     return cfg, env
