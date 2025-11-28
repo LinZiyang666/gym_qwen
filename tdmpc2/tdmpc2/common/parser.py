@@ -181,12 +181,39 @@ def populate_env_dims(cfg):
 
     env = make_env(cfg_env)
 
+    obs_type = getattr(cfg, "obs_type", None)
+    if not isinstance(obs_type, str) or obs_type == "???":
+        obs_type = "states"
+        cfg.obs_type = obs_type
+
+    if (
+        not hasattr(cfg, "obs_shape")
+        or isinstance(cfg.obs_shape, str)
+        or getattr(cfg, "obs_shape", None) == "???"
+    ):
+        if hasattr(env, "obs_shape"):
+            obs_shape_env = env.obs_shape
+            if isinstance(obs_shape_env, dict):
+                cfg.obs_shape = obs_shape_env
+            else:
+                cfg.obs_shape = {obs_type: tuple(obs_shape_env)}
+        else:
+            cfg.obs_shape = {obs_type: tuple(env.observation_space.shape)}
+
     if (
         not hasattr(cfg, "obs_dim")
         or isinstance(cfg.obs_dim, str)
         or getattr(cfg, "obs_dim", None) == "???"
     ):
-        if hasattr(env, "obs_shape"):
+        obs_shape_cfg = getattr(cfg, "obs_shape", None)
+        if isinstance(obs_shape_cfg, dict):
+            if obs_type in obs_shape_cfg:
+                shape_for_dim = obs_shape_cfg[obs_type]
+            else:
+                first_key = next(iter(obs_shape_cfg.keys()))
+                shape_for_dim = obs_shape_cfg[first_key]
+            cfg.obs_dim = int(shape_for_dim[0])
+        elif hasattr(env, "obs_shape"):
             if isinstance(env.obs_shape, dict):
                 first_key = next(iter(env.obs_shape.keys()))
                 cfg.obs_dim = int(env.obs_shape[first_key][0])
