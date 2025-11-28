@@ -252,7 +252,10 @@ def _load_agent_for_model(
 ):
     normalized_model_id = Path(model_id).stem
     agent, cfg = load_pretrained_tdmpc2(
-        checkpoint_path=ckpt_path, device=str(device), model_id=normalized_model_id
+        checkpoint_path=ckpt_path,
+        device=str(device),
+        model_id=normalized_model_id,
+        task=args.task,
     )
     return agent, cfg
 
