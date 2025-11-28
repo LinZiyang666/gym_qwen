@@ -68,7 +68,24 @@ class WorldModel(nn.Module):
         self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
         self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
         self.apply(init.weight_init)
-        init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
+        q_weight_keys = [
+            key
+            for key in self._Qs.params.keys(True)
+            if key[-1] == "weight" and (len(key) < 2 or key[-2] != "ln")
+        ]
+
+        def _layer_order(key):
+            try:
+                return int(key[0])
+            except (TypeError, ValueError):
+                return -1
+
+        q_weight_key = max(q_weight_keys, key=_layer_order) if q_weight_keys else None
+
+        params_to_zero = [self._reward[-1].weight]
+        if q_weight_key is not None:
+            params_to_zero.append(self._Qs.params[q_weight_key])
+        init.zero_(params_to_zero)
 
         self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
         self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
