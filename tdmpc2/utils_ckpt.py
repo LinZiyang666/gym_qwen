@@ -176,6 +176,7 @@ def load_pretrained_tdmpc2(
     obs: str = "state",
     collection_mode: str = "single",
     cfg_overrides: Optional[dict] = None,
+    init_env: bool = True,
     **_: Dict,
 ):
     """Instantiate a TD-MPC2 agent from a checkpoint using an embedded or YAML config."""
@@ -214,10 +215,12 @@ def load_pretrained_tdmpc2(
 
         cfg = parse_cfg(cfg)
         cfg = align_cfg_with_checkpoint(cfg, model_state)
-        cfg, env_for_dims = populate_env_dims(cfg)
+        env_for_dims = None
+        if init_env:
+            cfg, env_for_dims = populate_env_dims(cfg)
 
-        if cfg.multitask and getattr(cfg, "collection_mode", collection_mode) != "single":
-            make_env(cfg)
+            if cfg.multitask and getattr(cfg, "collection_mode", collection_mode) != "single":
+                make_env(cfg)
 
         agent = TDMPC2(cfg)
         agent.to(device)
@@ -287,10 +290,12 @@ def load_pretrained_tdmpc2(
 
     cfg = parse_cfg(cfg)
     cfg = align_cfg_with_checkpoint(cfg, model_state)
-    cfg, env_for_dims = populate_env_dims(cfg)
+    env_for_dims = None
+    if init_env:
+        cfg, env_for_dims = populate_env_dims(cfg)
 
-    if cfg.multitask and getattr(cfg, "collection_mode", collection_mode) != "single":
-        make_env(cfg)
+        if cfg.multitask and getattr(cfg, "collection_mode", collection_mode) != "single":
+            make_env(cfg)
 
     agent = TDMPC2(cfg)
     agent.to(device)
