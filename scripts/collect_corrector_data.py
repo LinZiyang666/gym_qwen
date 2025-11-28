@@ -130,9 +130,13 @@ def collect_for_agent(
     feat_dim = 3 * cfg.latent_dim + cfg.action_dim
     env = make_env(cfg)
 
-    task = getattr(env, "task", None) if hasattr(env, "task") else None
-    if task is None:
-        task = getattr(cfg, "task", None)
+    task = None
+    if cfg.multitask:
+        task = getattr(env, "task_idx", 0)
+    else:
+        task = getattr(env, "task", None)
+        if task is None:
+            task = getattr(cfg, "task", None)
 
     print(f"Collecting corrector data for task {cfg.task} on device {cfg.device} -> {output_path}")
     episodes = 0
@@ -245,14 +249,9 @@ def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, Dict[str, s
 def _load_agent_for_model(
     model_id: str, ckpt_path: str, args: argparse.Namespace, device: torch.device
 ):
-    spec_overrides = {"spec_enabled": False, "speculate": False}
-    agent, cfg, _ = load_pretrained_tdmpc2(
-        model_id,
-        checkpoint_path=ckpt_path,
-        device=str(device),
-        task=args.task,
-        config_path=args.config,
-        spec_overrides=spec_overrides,
+    normalized_model_id = Path(model_id).stem
+    agent, cfg = load_pretrained_tdmpc2(
+        checkpoint_path=ckpt_path, device=str(device), model_id=normalized_model_id
     )
     return agent, cfg
 
