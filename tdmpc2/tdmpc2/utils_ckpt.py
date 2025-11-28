@@ -9,6 +9,7 @@ import torch
 from omegaconf import OmegaConf
 
 from tdmpc2 import TDMPC2
+from tdmpc2.common.parser import parse_cfg, populate_env_dims
 
 
 def _canonical_model_id(model_id: str) -> str:
@@ -40,6 +41,70 @@ def _extract_state_dict_from_checkpoint(state: dict):
                 return candidate
     # Fallback: assume the entire object is already a state dict.
     return state
+
+
+def _infer_dims_from_state(model_state: Dict[str, torch.Tensor]) -> Dict[str, int]:
+    """Infer key architectural input dimensions directly from a checkpoint state."""
+
+    dims: Dict[str, int] = {}
+    if not isinstance(model_state, dict):
+        return dims
+
+    if "_task_emb.weight" in model_state:
+        dims["task_emb_dim"] = int(model_state["_task_emb.weight"].shape[1])
+    if "_encoder.state.0.weight" in model_state:
+        dims["encoder_in_dim"] = int(model_state["_encoder.state.0.weight"].shape[1])
+    if "_dynamics.0.weight" in model_state:
+        dims["dyn_in_dim"] = int(model_state["_dynamics.0.weight"].shape[1])
+    if "_reward.0.weight" in model_state:
+        dims["rew_in_dim"] = int(model_state["_reward.0.weight"].shape[1])
+    if "_pi.0.weight" in model_state:
+        dims["pi_in_dim"] = int(model_state["_pi.0.weight"].shape[1])
+
+    if dims:
+        print("[DEBUG] Inferred checkpoint dims:", dims)
+    return dims
+
+
+def align_cfg_with_checkpoint(cfg, model_state: Dict[str, torch.Tensor]):
+    """Align architecture-critical config fields with a pretrained checkpoint."""
+
+    inferred_dims = _infer_dims_from_state(model_state)
+
+    task_emb_dim = inferred_dims.get("task_emb_dim", None)
+    if task_emb_dim is not None:
+        cfg.task_dim = int(task_emb_dim)
+        cfg.task_emb_dim = int(task_emb_dim)
+
+    encoder_in_dim = inferred_dims.get("encoder_in_dim", None)
+    if encoder_in_dim is not None:
+        cfg.encoder_in_dim = int(encoder_in_dim)
+        base_obs_dim = encoder_in_dim - int(getattr(cfg, "task_dim", 0))
+        if base_obs_dim > 0:
+            cfg.obs_dim = int(base_obs_dim)
+            obs_type = getattr(cfg, "obs_type", "states")
+            cfg.obs_shape = {obs_type: (cfg.obs_dim,)}
+
+    dyn_in_dim = inferred_dims.get("dyn_in_dim", None)
+    if dyn_in_dim is not None:
+        cfg.dyn_in_dim = int(dyn_in_dim)
+        latent_dim = int(getattr(cfg, "latent_dim", 0))
+        task_dim = int(getattr(cfg, "task_dim", 0))
+        candidate_action_dim = dyn_in_dim - latent_dim - task_dim
+        if candidate_action_dim > 0:
+            cfg.action_dim = int(candidate_action_dim)
+            cfg.action_dims = [cfg.action_dim] * max(1, len(getattr(cfg, "tasks", []) or [None]))
+
+    rew_in_dim = inferred_dims.get("rew_in_dim", None)
+    if rew_in_dim is not None:
+        cfg.rew_in_dim = int(rew_in_dim)
+
+    pi_in_dim = inferred_dims.get("pi_in_dim", None)
+    if pi_in_dim is not None:
+        cfg.pi_in_dim = int(pi_in_dim)
+
+    cfg.pretrained_aligned = True
+    return cfg
 
 
 def list_pretrained_checkpoints(
@@ -84,7 +149,7 @@ def load_pretrained_tdmpc2(
     device: str = "cuda",
     model_id: Optional[str] = None,
     **_: Dict,
-): 
+):
     """Instantiate a TD-MPC2 agent from a checkpoint using an embedded or YAML config."""
 
     state = torch.load(checkpoint_path, map_location=device, weights_only=False)
@@ -94,6 +159,9 @@ def load_pretrained_tdmpc2(
     if model_id is not None:
         model_id = _canonical_model_id(model_id)
 
+    model_state = _extract_state_dict_from_checkpoint(state)
+
+    env_for_dims = None
     for key in ("cfg", "config", "hydra_cfg"):
         if key in state:
             cfg = state[key]
@@ -106,28 +174,13 @@ def load_pretrained_tdmpc2(
             if model_id is not None:
                 cfg.model_id = model_id
 
+            cfg = parse_cfg(cfg)
+            cfg = align_cfg_with_checkpoint(cfg, model_state)
+            cfg, env_for_dims = populate_env_dims(cfg)
+
             agent = TDMPC2(cfg)
             agent.to(device)
             agent.eval()
-
-            model_state = _extract_state_dict_from_checkpoint(state)
-
-            # Debugging shape mismatches between the checkpoint and instantiated model.
-            model_sd = agent.model.state_dict()
-            mismatches = []
-            for k, v in model_state.items():
-                if k in model_sd:
-                    if model_sd[k].shape != v.shape:
-                        print(
-                            "[SHAPE MISMATCH]",
-                            k,
-                            "model:",
-                            model_sd[k].shape,
-                            "ckpt:",
-                            v.shape,
-                        )
-                        mismatches.append(k)
-            print("Total mismatched params:", len(mismatches))
 
             agent.load(model_state)
             return agent, cfg
@@ -136,9 +189,6 @@ def load_pretrained_tdmpc2(
     if model_id is None:
         model_id = Path(checkpoint_path).stem
     model_id = _canonical_model_id(model_id)
-
-    from tdmpc2.common.parser import parse_cfg
-    from tdmpc2.envs import make_env
 
     checkpoint_dir = Path(__file__).resolve().parent
     base_config = checkpoint_dir / "config.yaml"
@@ -189,29 +239,13 @@ def load_pretrained_tdmpc2(
     cfg.model_id = model_id
 
     cfg = parse_cfg(cfg)
-
-    # Populate observation and action dimensions before building the agent when missing.
-    needs_env_dims = False
-    for key in ("obs_shape", "obs_shapes", "action_dim", "action_dims", "episode_length", "episode_lengths"):
-        val = getattr(cfg, key, None)
-        if val is None or (isinstance(val, str) and val == "???"):
-            needs_env_dims = True
-            break
-
-    if needs_env_dims:
-        env = make_env(cfg)
-        try:
-            close_fn = getattr(env, "close", None)
-            if callable(close_fn):
-                close_fn()
-        except Exception:
-            pass
+    cfg = align_cfg_with_checkpoint(cfg, model_state)
+    cfg, env_for_dims = populate_env_dims(cfg)
 
     agent = TDMPC2(cfg)
     agent.to(device)
     agent.eval()
 
-    model_state = _extract_state_dict_from_checkpoint(state)
     agent.load(model_state)
 
     return agent, cfg

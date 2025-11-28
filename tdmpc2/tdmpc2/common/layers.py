@@ -176,10 +176,14 @@ def enc(cfg, out={}):
         obs_shape = {obs_type: tuple(obs_shape)}
         cfg.obs_shape = obs_shape
 
+    encoder_in_dim_override = getattr(cfg, "encoder_in_dim", None)
+
     for k in obs_shape.keys():
+        override_dim = encoder_in_dim_override if encoder_in_dim_override is not None else None
         if k in ("state", "states", "proprio", "obs"):
+            in_dim = override_dim if override_dim is not None else obs_shape[k][0] + cfg.task_dim
             out[k] = mlp(
-                obs_shape[k][0] + cfg.task_dim,
+                in_dim,
                 max(cfg.num_enc_layers - 1, 1) * [cfg.enc_dim],
                 cfg.latent_dim,
                 act=SimNorm(cfg),
@@ -187,8 +191,9 @@ def enc(cfg, out={}):
         elif k in ("rgb", "pixels"):
             out[k] = conv(obs_shape[k], cfg.num_channels, act=SimNorm(cfg))
         else:
+            in_dim = override_dim if override_dim is not None else obs_shape[k][0] + cfg.task_dim
             out[k] = mlp(
-                obs_shape[k][0] + cfg.task_dim,
+                in_dim,
                 max(cfg.num_enc_layers - 1, 1) * [cfg.enc_dim],
                 cfg.latent_dim,
                 act=SimNorm(cfg),

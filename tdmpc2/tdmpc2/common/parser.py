@@ -143,6 +143,17 @@ def populate_env_dims(cfg):
         cfg, env_for_dims
     """
 
+    pretrained_aligned = bool(getattr(cfg, "pretrained_aligned", False))
+
+    ready_fields = (
+        getattr(cfg, "obs_shape", None),
+        getattr(cfg, "obs_dim", None),
+        getattr(cfg, "action_dim", None),
+        getattr(cfg, "action_dims", None),
+    )
+    if pretrained_aligned and all(val is not None and val != "???" for val in ready_fields):
+        return cfg, None
+
     task = getattr(cfg, "task", None)
     tasks = getattr(cfg, "tasks", None)
 
