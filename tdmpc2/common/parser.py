@@ -8,8 +8,8 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
-from common import MODEL_SIZE, TASK_SET
-from envs import make_env
+from . import MODEL_SIZE, TASK_SET
+from ..envs import make_env
 
 
 def _get_base_dir_for_cfg() -> Path:
@@ -150,6 +150,7 @@ def populate_env_dims(cfg):
         getattr(cfg, "obs_dim", None),
         getattr(cfg, "action_dim", None),
         getattr(cfg, "action_dims", None),
+        getattr(cfg, "episode_length", None),
     )
     if pretrained_aligned and all(val is not None and val != "???" for val in ready_fields):
         return cfg, None
@@ -282,5 +283,8 @@ def populate_env_dims(cfg):
         or getattr(cfg, "action_dims", None) == "???"
     ):
         cfg.action_dims = [cfg.action_dim] * num_tasks_for_dims
+
+    if hasattr(cfg_env, "episode_length"):
+        cfg.episode_length = cfg_env.episode_length
 
     return cfg, env
