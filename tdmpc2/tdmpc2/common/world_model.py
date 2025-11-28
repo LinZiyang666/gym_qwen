@@ -68,10 +68,30 @@ class WorldModel(nn.Module):
         self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
         self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
         self.apply(init.weight_init)
+        q_param_keys = []
+        if hasattr(self._Qs, "params") and hasattr(self._Qs.params, "keys"):
+            key_variants = (
+                {"args": (True,), "kwargs": {}},
+                {"args": (), "kwargs": {"include_nested": True}},
+                {"args": (), "kwargs": {}},
+            )
+            for variant in key_variants:
+                try:
+                    q_param_keys = list(
+                        self._Qs.params.keys(*variant["args"], **variant["kwargs"])
+                    )
+                    break
+                except TypeError:
+                    continue
+        if not q_param_keys and isinstance(self._Qs.params, dict):
+            q_param_keys = list(self._Qs.params.keys())
+
         q_weight_keys = [
             key
-            for key in self._Qs.params.keys(True)
-            if key[-1] == "weight" and (len(key) < 2 or key[-2] != "ln")
+            for key in q_param_keys
+            if isinstance(key, tuple)
+            and key[-1] == "weight"
+            and (len(key) < 2 or key[-2] != "ln")
         ]
 
         def _layer_order(key):
