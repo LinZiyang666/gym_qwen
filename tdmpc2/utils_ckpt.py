@@ -149,6 +149,8 @@ def load_pretrained_tdmpc2(
     checkpoint_path: str,
     device: str = "cuda",
     model_id: Optional[str] = None,
+    task: Optional[str] = None,
+    cfg_overrides: Optional[dict] = None,
     **_: Dict,
 ):
     """Instantiate a TD-MPC2 agent from a checkpoint using an embedded or YAML config."""
@@ -174,6 +176,13 @@ def load_pretrained_tdmpc2(
             cfg.checkpoint = str(checkpoint_path)
             if model_id is not None:
                 cfg.model_id = model_id
+
+            if task is not None:
+                cfg.task = task
+
+            if cfg_overrides:
+                for key, value in cfg_overrides.items():
+                    setattr(cfg, key, value)
 
             cfg.compile = False
 
@@ -243,6 +252,13 @@ def load_pretrained_tdmpc2(
     cfg.disable_wandb = True
     cfg.eval_mode = True
     cfg.model_id = model_id
+
+    if task is not None:
+        cfg.task = task
+
+    if cfg_overrides:
+        for key, value in cfg_overrides.items():
+            setattr(cfg, key, value)
 
     cfg.compile = False
 

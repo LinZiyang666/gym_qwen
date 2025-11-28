@@ -65,7 +65,9 @@ def _build_agent(model_id: str, ckpt_path: str, variant: Dict[str, Any], args: a
     corr_type = variant["corrector_type"]
     exec_h = variant["exec_horizon"]
     corrector_ckpt = _corrector_ckpt_for(model_id, corr_type, args)
-    agent, cfg = load_pretrained_tdmpc2(checkpoint_path=ckpt_path, device=args.device, model_id=model_id)
+    agent, cfg = load_pretrained_tdmpc2(
+        checkpoint_path=ckpt_path, device=args.device, model_id=model_id, task=args.task
+    )
     return agent, cfg, {}, corrector_ckpt
 
 
