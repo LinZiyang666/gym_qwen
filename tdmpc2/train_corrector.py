@@ -12,8 +12,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from .corrector import build_corrector_from_cfg, corrector_loss
-from .utils_ckpt import list_pretrained_checkpoints
+try:
+    # When running as a package, e.g., `python -m tdmpc2.train_corrector`
+    from .corrector import build_corrector_from_cfg, corrector_loss
+    from .utils_ckpt import list_pretrained_checkpoints
+except ImportError:
+    # Fallback for running as a standalone script
+    from corrector import build_corrector_from_cfg, corrector_loss
+    from utils_ckpt import list_pretrained_checkpoints
 
 
 class CorrectorDataset(Dataset):
