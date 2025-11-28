@@ -134,20 +134,41 @@ class WorldModel(nn.Module):
                 f"Unsupported params type for Qs: {type(params)}"
             )
 
-        self._detach_Qs_params = TensorDictParams(params_data, no_convert=True)
-        self._target_Qs_params = TensorDictParams(params_data.clone(), no_convert=True)
+        params_keys = list(params_data.keys()) if hasattr(params_data, "keys") else []
+        module_param_names = [name for name, _ in self._Qs.module.named_parameters()]
 
-        # Create modules
-        with self._detach_Qs_params.data.to("meta").to_module(self._Qs.module):
+        self._detach_Qs_params = None
+        self._target_Qs_params = None
+        self._detach_Qs = None
+        self._target_Qs = None
+
+        try:
+            self._detach_Qs_params = TensorDictParams(params_data, no_convert=True)
+            self._target_Qs_params = TensorDictParams(params_data.clone(), no_convert=True)
+
+            # Create modules
+            with self._detach_Qs_params.data.to("meta").to_module(self._Qs.module):
+                self._detach_Qs = deepcopy(self._Qs)
+                self._target_Qs = deepcopy(self._Qs)
+
+            # Assign params to modules
+            # We do this strange assignment to avoid having duplicated tensors in the state-dict -- working on a better API for this
+            delattr(self._detach_Qs, "params")
+            self._detach_Qs.__dict__["params"] = self._detach_Qs_params
+            delattr(self._target_Qs, "params")
+            self._target_Qs.__dict__["params"] = self._target_Qs_params
+        except Exception as exc:
+            print(
+                "[WARN] Failed to set up TensorDictParams for Qs:",
+                f"{exc!r}. Using fallback Q copies.",
+                f"TensorDict keys: {params_keys}; module params: {module_param_names}",
+            )
             self._detach_Qs = deepcopy(self._Qs)
             self._target_Qs = deepcopy(self._Qs)
-
-        # Assign params to modules
-        # We do this strange assignment to avoid having duplicated tensors in the state-dict -- working on a better API for this
-        delattr(self._detach_Qs, "params")
-        self._detach_Qs.__dict__["params"] = self._detach_Qs_params
-        delattr(self._target_Qs, "params")
-        self._target_Qs.__dict__["params"] = self._target_Qs_params
+            for p in self._detach_Qs.parameters():
+                p.requires_grad_(False)
+            for p in self._target_Qs.parameters():
+                p.requires_grad_(False)
 
     def __repr__(self):
         repr = 'TD-MPC2 World Model\n'
@@ -188,7 +209,14 @@ class WorldModel(nn.Module):
         """
         Soft-update target Q-networks using Polyak averaging.
         """
-        self._target_Qs_params.lerp_(self._detach_Qs_params, self.cfg.tau)
+        if self._target_Qs_params is not None and self._detach_Qs_params is not None:
+            self._target_Qs_params.lerp_(self._detach_Qs_params, self.cfg.tau)
+        else:
+            with torch.no_grad():
+                for target_param, online_param in zip(
+                    self._target_Qs.parameters(), self._detach_Qs.parameters()
+                ):
+                    target_param.lerp_(online_param, self.cfg.tau)
 
     def task_emb(self, x, task):
         """
