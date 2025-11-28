@@ -12,7 +12,6 @@ features allow the temporal transformer corrector to reason over recent mismatch
 
 import argparse
 import os
-import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -21,21 +20,17 @@ from typing import Any, Dict, Iterable, List, Optional
 import torch
 from omegaconf import OmegaConf
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
-
 DEFAULT_OUTPUT = None
 
-from tdmpc2.common.parser import parse_cfg  # noqa: E402
-from tdmpc2.common.seed import set_seed  # noqa: E402
-from tdmpc2.envs import make_env  # noqa: E402
-from tdmpc2 import TDMPC2  # noqa: E402
-from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2  # noqa: E402
+from tdmpc2.common.parser import parse_cfg
+from tdmpc2.common.seed import set_seed
+from tdmpc2.envs import make_env
+from tdmpc2 import TDMPC2
+from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2
 
 
 def default_config_path() -> Path:
-    return REPO_ROOT / "tdmpc2" / "config.yaml"
+    return Path(__file__).resolve().parents[1] / "tdmpc2" / "config.yaml"
 
 
 class CorrectorDataset:
