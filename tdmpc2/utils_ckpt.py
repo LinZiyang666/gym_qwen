@@ -9,8 +9,8 @@ import torch
 from omegaconf import OmegaConf
 
 from tdmpc2 import TDMPC2
-from tdmpc2.common.parser import parse_cfg, populate_env_dims
-from tdmpc2.envs import make_env
+from .common.parser import parse_cfg, populate_env_dims
+from .envs import make_env
 
 
 def _canonical_model_id(model_id: str) -> str:
@@ -123,9 +123,15 @@ def list_pretrained_checkpoints(
     ``model_size_filter`` performs a case-insensitive exact match on the
     ``model_size`` field when provided.
     """
-
     checkpoints: Dict[str, Dict[str, str]] = {}
-    root = Path(checkpoint_dir)
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent
+    abs_checkpoint_dir = project_root / checkpoint_dir
+    root = abs_checkpoint_dir
+
+    if not root.is_dir():
+        return {}
+
     for path in root.glob("*"):
         if not path.is_file() or path.suffix.lower() not in extensions:
             continue
@@ -146,19 +152,22 @@ def list_pretrained_checkpoints(
 
 
 def load_pretrained_tdmpc2(
-    checkpoint_path: str,
+    ckpt_path: str,
+    task: str,
+    model_size: int,
     device: str = "cuda",
-    model_id: Optional[str] = None,
+    obs: str = "state",
+    cfg_overrides: Optional[dict] = None,
     **_: Dict,
 ):
-    """Instantiate a TD-MPC2 agent from a checkpoint using an embedded or YAML config."""
+    """Instantiate a TD-MPC2 agent from a checkpoint using an embedded or YAML config.
 
-    state = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    ``task`` is treated as the dataset identifier (e.g., "mt30", "mt70", "mt80" for
+    multi-task checkpoints) and is not overridden inside this function.
+    """
+    state = torch.load(ckpt_path, map_location=device, weights_only=False)
     if not isinstance(state, dict):
-        raise RuntimeError(f"Checkpoint {checkpoint_path} must be a mapping with a saved config.")
-
-    if model_id is not None:
-        model_id = _canonical_model_id(model_id)
+        raise RuntimeError(f"Checkpoint {ckpt_path} must be a mapping with a saved config.")
 
     model_state = _extract_state_dict_from_checkpoint(state)
 
@@ -171,9 +180,17 @@ def load_pretrained_tdmpc2(
             cfg.device = str(device)
             cfg.disable_wandb = True
             cfg.eval_mode = True
-            cfg.checkpoint = str(checkpoint_path)
-            if model_id is not None:
-                cfg.model_id = model_id
+            cfg.checkpoint = str(ckpt_path)
+            cfg.model_id = _canonical_model_id(Path(ckpt_path).stem)
+            cfg.model_size = int(model_size)
+
+            cfg.task = task
+            cfg.obs = obs.lower()
+            cfg.obs_type = cfg.obs
+
+            if cfg_overrides:
+                for key, value in cfg_overrides.items():
+                    setattr(cfg, key, value)
 
             cfg.compile = False
 
@@ -192,9 +209,7 @@ def load_pretrained_tdmpc2(
             return agent, cfg
 
     # Fallback: no config stored in the checkpoint; load from YAML based on model id.
-    if model_id is None:
-        model_id = Path(checkpoint_path).stem
-    model_id = _canonical_model_id(model_id)
+    model_id = _canonical_model_id(Path(ckpt_path).stem)
 
     checkpoint_dir = Path(__file__).resolve().parent
     base_config = checkpoint_dir / "config.yaml"
@@ -222,27 +237,28 @@ def load_pretrained_tdmpc2(
 
     # Infer task and size from the model id.
     stem = Path(model_id).stem
-    metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
-    cfg.task = metadata.get("task", cfg.get("task", None))
+    cfg.task = task
     parts = stem.split("-")
-    if cfg.task is None and parts:
-        # Treat all but a trailing size token as the task name when no metadata is available.
-        potential_size = parts[-1].rstrip("mM")
-        if len(parts) > 1 and potential_size.isdigit():
-            cfg.task = "-".join(parts[:-1])
-        else:
-            cfg.task = parts[0]
-
     if len(parts) > 1:
         size_token = parts[-1].rstrip("mM")
         if size_token.isdigit():
             cfg.model_size = int(size_token)
+    if getattr(cfg, "model_size", None) is None:
+        cfg.model_size = int(model_size)
 
-    cfg.checkpoint = str(checkpoint_path)
+    cfg.checkpoint = str(ckpt_path)
     cfg.device = str(device)
     cfg.disable_wandb = True
     cfg.eval_mode = True
     cfg.model_id = model_id
+
+    cfg.task = task
+    cfg.obs = obs.lower()
+    cfg.obs_type = cfg.obs
+
+    if cfg_overrides:
+        for key, value in cfg_overrides.items():
+            setattr(cfg, key, value)
 
     cfg.compile = False
 
