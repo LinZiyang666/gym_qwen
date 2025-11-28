@@ -146,6 +146,7 @@ def populate_env_dims(cfg):
     task = getattr(cfg, "task", None)
     tasks = getattr(cfg, "tasks", None)
 
+    single_task = None
     if tasks is not None:
         flat_tasks = []
         if isinstance(tasks, (list, tuple)):
@@ -158,19 +159,25 @@ def populate_env_dims(cfg):
             flat_tasks = [tasks]
 
         flat_tasks = [t for t in flat_tasks if isinstance(t, str)]
-        if len(flat_tasks) == 0:
+        if not flat_tasks:
             raise ValueError(f"populate_env_dims: could not infer a string task from cfg.tasks={tasks!r}")
-        task_str = flat_tasks[0]
+        single_task = flat_tasks[0]
+    elif isinstance(task, str):
+        single_task = task
     else:
-        if isinstance(task, str):
-            task_str = task
-        else:
-            raise ValueError("populate_env_dims: cfg.task is not a string and cfg.tasks is None")
+        raise ValueError("populate_env_dims: neither cfg.task nor cfg.tasks provide a string task")
 
     cfg_env = copy.deepcopy(cfg)
-    cfg_env.task = task_str
+    cfg_env.task = single_task
+
     if hasattr(cfg_env, "tasks"):
         cfg_env.tasks = None
+    if hasattr(cfg_env, "multitask"):
+        cfg_env.multitask = False
+    if hasattr(cfg_env, "multi_task"):
+        cfg_env.multi_task = False
+    if hasattr(cfg_env, "num_tasks"):
+        cfg_env.num_tasks = 1
 
     env = make_env(cfg_env)
 
