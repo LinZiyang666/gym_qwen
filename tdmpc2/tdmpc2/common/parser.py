@@ -95,33 +95,33 @@ def parse_cfg(cfg: OmegaConf) -> OmegaConf:
 	if tasks_override:
 		cfg.tasks = list(tasks_override)
 		cfg.multitask = True
-        else:
-                cfg.tasks = TASK_SET.get(cfg.task, [cfg.task])
-        if cfg.multitask:
-                if cfg.task in TASK_SET.keys():
-                        cfg.task_title = cfg.task.upper()
-                # Account for slight inconsistency in task_dim for the mt30 experiments
-                default_task_dim = 96 if cfg.task == 'mt80' or cfg.get('model_size', 5) in {1, 317} else 64
-                if not isinstance(cfg.get('task_dim', None), (int, float)):
-                        cfg.task_dim = default_task_dim
-        else:
-                cfg.task_dim = 0
+	else:
+		cfg.tasks = TASK_SET.get(cfg.task, [cfg.task])
+	if cfg.multitask:
+		if cfg.task in TASK_SET.keys():
+			cfg.task_title = cfg.task.upper()
+		# Account for slight inconsistency in task_dim for the mt30 experiments
+		default_task_dim = 96 if cfg.task == 'mt80' or cfg.get('model_size', 5) in {1, 317} else 64
+		if not isinstance(cfg.get('task_dim', None), (int, float)):
+			cfg.task_dim = default_task_dim
+	else:
+		cfg.task_dim = 0
 
-        # Normalize action dimensions to integers for downstream tensor shapes.
-        action_dim = cfg.get('action_dim', None)
-        if action_dim is not None:
-                try:
-                        cfg.action_dim = int(action_dim)
-                except Exception:
-                        cfg.action_dim = action_dim
+	# Normalize action dimensions to integers for downstream tensor shapes.
+	action_dim = cfg.get('action_dim', None)
+	if action_dim is not None:
+		try:
+			cfg.action_dim = int(action_dim)
+		except Exception:
+			cfg.action_dim = action_dim
 
-        action_dims = cfg.get('action_dims', None)
-        if action_dims is not None:
-                if not isinstance(action_dims, (list, tuple)):
-                        action_dims = [action_dims]
-                try:
-                        cfg.action_dims = [int(d) for d in action_dims]
-                except Exception:
-                        cfg.action_dims = action_dims
+	action_dims = cfg.get('action_dims', None)
+	if action_dims is not None:
+		if not isinstance(action_dims, (list, tuple)):
+			action_dims = [action_dims]
+		try:
+			cfg.action_dims = [int(d) for d in action_dims]
+		except Exception:
+			cfg.action_dims = action_dims
 
-        return cfg_to_dataclass(cfg)
+	return cfg_to_dataclass(cfg)
