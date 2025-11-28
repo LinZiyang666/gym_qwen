@@ -208,7 +208,10 @@ def api_model_conversion(target_state_dict, source_state_dict):
     keys that exist in the target model and skips metadata-style keys.
     """
     # check whether checkpoint is already in the new format
-    if "_detach_Qs_params.0.weight" in source_state_dict:
+    if any(
+        key.startswith("_detach_Qs.params.") or key.startswith("_detach_Qs.")
+        for key in source_state_dict
+    ):
         return source_state_dict
 
     name_map = ['weight', 'bias', 'ln.weight', 'ln.bias']
@@ -238,7 +241,7 @@ def api_model_conversion(target_state_dict, source_state_dict):
         if key.startswith('_Qs.'):
             num = key[len('_Qs.params.') :]
             new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
-            for prefix in ("_Qs.params.", "_detach_Qs_params."):
+            for prefix in ("_Qs.params.", "_detach_Qs.params."):
                 candidate_key = prefix + new_key
                 if candidate_key in target_state_dict and not is_metadata(candidate_key):
                     new_state_dict[candidate_key] = val
@@ -246,7 +249,7 @@ def api_model_conversion(target_state_dict, source_state_dict):
         elif key.startswith('_target_Qs.'):
             num = key[len('_target_Qs.params.') :]
             new_key = str(int(num) // 4) + "." + name_map[int(num) % 4]
-            candidate_key = "_target_Qs_params." + new_key
+            candidate_key = "_target_Qs.params." + new_key
             if candidate_key in target_state_dict and not is_metadata(candidate_key):
                 new_state_dict[candidate_key] = val
             del expanded_state_dict[key]
