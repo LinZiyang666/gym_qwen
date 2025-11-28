@@ -18,8 +18,12 @@ class WorldModel(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.transformer_dynamic = bool(getattr(cfg, "transformer_dynamic", False))
+        task_dim = int(getattr(cfg, "task_dim", 0))
+        if hasattr(cfg, "task_emb_dim"):
+            task_dim = int(getattr(cfg, "task_emb_dim", task_dim))
+            cfg.task_dim = task_dim
         if cfg.multitask:
-            self._task_emb = nn.Embedding(len(cfg.tasks), cfg.task_dim, max_norm=1)
+            self._task_emb = nn.Embedding(len(cfg.tasks), task_dim, max_norm=1)
 
             tasks = getattr(cfg, "tasks", None)
             num_tasks = len(tasks) if isinstance(tasks, (list, tuple)) else 1
@@ -51,7 +55,7 @@ class WorldModel(nn.Module):
             self._dynamics = TransformerDynamics(
                 latent_dim=cfg.latent_dim,
                 action_dim=cfg.action_dim,
-                task_dim=cfg.task_dim,
+                task_dim=task_dim,
                 embed_dim=getattr(cfg, "transformer_embed_dim", None),
                 num_layers=getattr(cfg, "transformer_layers", 2),
                 num_heads=getattr(cfg, "transformer_heads", 4),
@@ -61,11 +65,23 @@ class WorldModel(nn.Module):
                 attn_dropout=getattr(cfg, "transformer_attn_dropout", 0.0),
             )
         else:
-            self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-        self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-        self._termination = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 1) if cfg.episodic else None
-        self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-        self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+            dyn_in_dim = getattr(cfg, "dyn_in_dim", None)
+            if dyn_in_dim is None:
+                dyn_in_dim = cfg.latent_dim + cfg.action_dim + task_dim
+            self._dynamics = layers.mlp(dyn_in_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
+        rew_in_dim = getattr(cfg, "rew_in_dim", None)
+        if rew_in_dim is None:
+            rew_in_dim = cfg.latent_dim + cfg.action_dim + task_dim
+        self._reward = layers.mlp(rew_in_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
+        self._termination = layers.mlp(cfg.latent_dim + task_dim, 2*[cfg.mlp_dim], 1) if cfg.episodic else None
+        pi_in_dim = getattr(cfg, "pi_in_dim", None)
+        if pi_in_dim is None:
+            pi_in_dim = cfg.latent_dim + task_dim
+        self._pi = layers.mlp(pi_in_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+        q_in_dim = getattr(cfg, "dyn_in_dim", None)
+        if q_in_dim is None:
+            q_in_dim = cfg.latent_dim + cfg.action_dim + task_dim
+        self._Qs = layers.Ensemble([layers.mlp(q_in_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
         self.apply(init.weight_init)
         q_param_keys = []
         if hasattr(self._Qs, "params") and hasattr(self._Qs.params, "keys"):
