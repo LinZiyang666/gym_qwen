@@ -7,24 +7,18 @@ import argparse
 import csv
 import datetime
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
-
-from tdmpc2.common.seed import set_seed  # noqa: E402
-from tdmpc2.envs import make_env  # noqa: E402
-from tdmpc2 import TDMPC2  # noqa: E402
-from tdmpc2.launch import launch, wrap_dataparallel  # noqa: E402
-from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2  # noqa: E402
+from tdmpc2.common.seed import set_seed
+from tdmpc2.envs import make_env
+from tdmpc2 import TDMPC2
+from tdmpc2.utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2
 
 EVAL_VARIANTS = [
     {"name": "baseline_replan", "exec_horizon": 1, "corrector_type": None},
@@ -170,9 +164,9 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
             corr_type = variant["corrector_type"]
             agent, cfg, _, corrector_ckpt = _build_agent(model_id, ckpt_path, variant, args)
             if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                agent.model = wrap_dataparallel(agent.model)
+                agent.model = nn.DataParallel(agent.model)
                 if getattr(agent, "corrector", None) is not None:
-                    agent.corrector = wrap_dataparallel(agent.corrector)
+                    agent.corrector = nn.DataParallel(agent.corrector)
             env = make_env(cfg)
             metrics = run_rollout(agent, env, episodes=args.episodes, max_steps=args.max_steps)
             summary = summarize(metrics)
@@ -266,9 +260,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to save a quick aggregate horizon plot (uses aggregated CSV).",
     )
     parser.add_argument("--results_csv", type=str, default="results/corrector_eval/summary.csv")
-    parser.add_argument(
-        "--gpus", type=str, default="1", help="GPU selection: 'all', N, or comma-separated list",
-    )
     return parser.parse_args()
 
 
@@ -276,4 +267,4 @@ if __name__ == "__main__":
     _args = parse_args()
     if _args.all_model_sizes:
         _args.all_models = True
-    launch(_args, main_worker, use_ddp=False, allow_dataparallel=True)
+    main_worker(rank=0, world_size=1, args=_args)
