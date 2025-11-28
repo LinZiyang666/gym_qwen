@@ -380,6 +380,7 @@ def _load_agent_for_model(
         model_size=model_size,
         device=str(device),
         obs=args.obs_type,
+        collection_mode="single",
     )
     return agent, cfg
 
@@ -397,10 +398,11 @@ def _load_agent_for_model_multitask(
     task_set, model_size = parse_multitask_model_id(Path(model_id).stem)
     agent, cfg = load_pretrained_tdmpc2(
         ckpt_path=ckpt_path,
-        task=task_set,
+        task=args.task or task_set,
         model_size=model_size,
         device=str(device),
         obs=args.obs_type,
+        collection_mode="single",
     )
     cfg.task_set = task_set
     cfg.model_size = model_size
