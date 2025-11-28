@@ -111,6 +111,24 @@ def load_pretrained_tdmpc2(
             agent.eval()
 
             model_state = _extract_state_dict_from_checkpoint(state)
+
+            # Debugging shape mismatches between the checkpoint and instantiated model.
+            model_sd = agent.model.state_dict()
+            mismatches = []
+            for k, v in model_state.items():
+                if k in model_sd:
+                    if model_sd[k].shape != v.shape:
+                        print(
+                            "[SHAPE MISMATCH]",
+                            k,
+                            "model:",
+                            model_sd[k].shape,
+                            "ckpt:",
+                            v.shape,
+                        )
+                        mismatches.append(k)
+            print("Total mismatched params:", len(mismatches))
+
             agent.load(model_state)
             return agent, cfg
 
@@ -140,10 +158,7 @@ def load_pretrained_tdmpc2(
         "mt80-317M": base_config,
     }
 
-    if model_id not in model_config_map:
-        raise RuntimeError(f"No YAML config mapped for model_id={model_id}")
-
-    cfg_path = model_config_map[model_id]
+    cfg_path = model_config_map.get(model_id, base_config)
     if not cfg_path.is_file():
         raise RuntimeError(f"Config file {cfg_path} for model_id={model_id} not found")
 
@@ -151,11 +166,19 @@ def load_pretrained_tdmpc2(
 
     # Infer task and size from the model id.
     stem = Path(model_id).stem
+    metadata = state.get("metadata", {}) if isinstance(state, dict) else {}
+    cfg.task = metadata.get("task", cfg.get("task", None))
     parts = stem.split("-")
-    if parts:
-        cfg.task = parts[0]
+    if cfg.task is None and parts:
+        # Treat all but a trailing size token as the task name when no metadata is available.
+        potential_size = parts[-1].rstrip("mM")
+        if len(parts) > 1 and potential_size.isdigit():
+            cfg.task = "-".join(parts[:-1])
+        else:
+            cfg.task = parts[0]
+
     if len(parts) > 1:
-        size_token = parts[1].rstrip("mM")
+        size_token = parts[-1].rstrip("mM")
         if size_token.isdigit():
             cfg.model_size = int(size_token)
 
