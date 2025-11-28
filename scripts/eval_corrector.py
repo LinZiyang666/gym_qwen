@@ -108,6 +108,7 @@ def _build_agent(
             obs=args.obs_type,
             collection_mode="single",
             cfg_overrides=_variant_overrides(variant, corr_ckpt, args),
+            init_env=False,
         )
         cfg.task_set = task_set
     else:
@@ -121,10 +122,11 @@ def _build_agent(
             obs=args.obs_type,
             collection_mode="single",
             cfg_overrides=_variant_overrides(variant, corr_ckpt, args),
+            init_env=False,
         )
     cfg.model_size = model_size
     cfg.model_id = model_id
-    return agent, cfg, {}, corr_ckpt
+    return agent, cfg, corr_ckpt
 
 
 def run_rollout(agent: TDMPC2, env, episodes: int, max_steps: int) -> Dict[str, List[float]]:
@@ -228,7 +230,7 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
         model_size = info.get("model_size", "")
         for variant in EVAL_VARIANTS:
             corr_type = variant["corrector_type"]
-            agent, cfg, _, corrector_ckpt = _build_agent(model_id, ckpt_path, info, variant, args)
+            agent, cfg, corrector_ckpt = _build_agent(model_id, ckpt_path, info, variant, args)
             if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                 agent.model = nn.DataParallel(agent.model)
                 if getattr(agent, "corrector", None) is not None:
