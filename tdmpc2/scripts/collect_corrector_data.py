@@ -130,9 +130,13 @@ def collect_for_agent(
     feat_dim = 3 * cfg.latent_dim + cfg.action_dim
     env = make_env(cfg)
 
-    task = getattr(env, "task", None) if hasattr(env, "task") else None
-    if task is None:
-        task = getattr(cfg, "task", None)
+    task = None
+    if cfg.multitask:
+        task = getattr(env, "task_idx", 0)
+    else:
+        task = getattr(env, "task", None)
+        if task is None:
+            task = getattr(cfg, "task", None)
 
     print(f"Collecting corrector data for task {cfg.task} on device {cfg.device} -> {output_path}")
     episodes = 0

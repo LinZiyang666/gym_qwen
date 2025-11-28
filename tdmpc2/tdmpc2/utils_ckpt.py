@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 
 from tdmpc2 import TDMPC2
 from tdmpc2.common.parser import parse_cfg, populate_env_dims
+from tdmpc2.envs import make_env
 
 
 def _canonical_model_id(model_id: str) -> str:
@@ -174,9 +175,14 @@ def load_pretrained_tdmpc2(
             if model_id is not None:
                 cfg.model_id = model_id
 
+            cfg.compile = False
+
             cfg = parse_cfg(cfg)
             cfg = align_cfg_with_checkpoint(cfg, model_state)
             cfg, env_for_dims = populate_env_dims(cfg)
+
+            if cfg.multitask:
+                make_env(cfg)
 
             agent = TDMPC2(cfg)
             agent.to(device)
@@ -238,9 +244,14 @@ def load_pretrained_tdmpc2(
     cfg.eval_mode = True
     cfg.model_id = model_id
 
+    cfg.compile = False
+
     cfg = parse_cfg(cfg)
     cfg = align_cfg_with_checkpoint(cfg, model_state)
     cfg, env_for_dims = populate_env_dims(cfg)
+
+    if cfg.multitask:
+        make_env(cfg)
 
     agent = TDMPC2(cfg)
     agent.to(device)

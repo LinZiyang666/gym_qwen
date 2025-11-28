@@ -35,13 +35,23 @@ class Ensemble(nn.Module):
 
     def forward(self, *args, **kwargs):
         outputs = []
+        device = args[0].device
         for i in range(self._n):
             params, buffers = self._slice_state(i)
+            params = {k: v.to(device) for k, v in params.items()}
+            buffers = {k: v.to(device) for k, v in buffers.items()}
             outputs.append(self._call(params, buffers, *args, **kwargs))
         return torch.stack(outputs)
 
     def __repr__(self):
         return f'Vectorized {len(self)}x ' + self._repr
+
+    def to(self, *args, **kwargs):
+        self.module.to(*args, **kwargs)
+        self.params = {k: v.to(*args, **kwargs) for k, v in self.params.items()}
+        self.buffers = {k: v.to(*args, **kwargs) for k, v in self.buffers.items()}
+        return self
+
 
 
 class ShiftAug(nn.Module):
