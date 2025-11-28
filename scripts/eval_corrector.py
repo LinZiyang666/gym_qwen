@@ -9,8 +9,9 @@ import datetime
 import json
 import sys
 import time
+from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -27,14 +28,29 @@ from tdmpc2 import TDMPC2
 from utils_ckpt import list_pretrained_checkpoints, load_pretrained_tdmpc2
 
 EVAL_VARIANTS = [
-    {"name": "baseline_replan", "exec_horizon": 1, "corrector_type": None},
-    {"name": "open_loop_2", "exec_horizon": 2, "corrector_type": None},
-    {"name": "open_loop_3", "exec_horizon": 3, "corrector_type": None},
-    {"name": "corrected_two_tower_2", "exec_horizon": 2, "corrector_type": "two_tower"},
-    {"name": "corrected_temporal_2", "exec_horizon": 2, "corrector_type": "temporal"},
-    {"name": "corrected_two_tower_3", "exec_horizon": 3, "corrector_type": "two_tower"},
-    {"name": "corrected_temporal_3", "exec_horizon": 3, "corrector_type": "temporal"},
+    {"name": "baseline", "exec_horizon": 1, "corrector_type": None},
+    {"name": "2_step_naive", "exec_horizon": 2, "corrector_type": None},
+    {"name": "3_step_naive", "exec_horizon": 3, "corrector_type": None},
+    {"name": "2_step_corrector", "exec_horizon": 2, "corrector_type": "two_tower"},
+    {"name": "2_step_corrector_temporal", "exec_horizon": 2, "corrector_type": "temporal"},
+    {"name": "3_step_corrector", "exec_horizon": 3, "corrector_type": "two_tower"},
+    {"name": "3_step_corrector_temporal", "exec_horizon": 3, "corrector_type": "temporal"},
 ]
+
+
+def parse_multitask_model_id(model_id: str) -> Tuple[str, int]:
+    name, size_str = model_id.split("-", 1)
+    if name not in {"mt30", "mt70", "mt80"}:
+        raise AssertionError(f"Unexpected multitask name: {name}")
+    model_size = int(size_str.replace("M", ""))
+    return name, model_size
+
+
+def info_size_to_int(size_token: str) -> int:
+    cleaned = "".join([c for c in str(size_token) if c.isdigit()])
+    if not cleaned:
+        raise ValueError(f"Unable to parse model size from token: {size_token}")
+    return int(cleaned)
 
 
 def _resolve_models(args: argparse.Namespace) -> Iterable[tuple[str, Dict[str, str]]]:
@@ -61,18 +77,53 @@ def _corrector_ckpt_for(model_id: str, corr_type: Optional[str], args: argparse.
     return str(ckpt_path)
 
 
-def _build_agent(model_id: str, ckpt_path: str, variant: Dict[str, Any], args: argparse.Namespace):
+def _variant_overrides(variant: Dict[str, Any], corr_ckpt: Optional[str], args: argparse.Namespace) -> Dict[str, Any]:
     corr_type = variant["corrector_type"]
     exec_h = variant["exec_horizon"]
-    corrector_ckpt = _corrector_ckpt_for(model_id, corr_type, args)
-    agent, cfg = load_pretrained_tdmpc2(
-        checkpoint_path=ckpt_path,
-        device=args.device,
-        model_id=model_id,
-        task=args.task,
-        obs_type=args.obs_type,
-    )
-    return agent, cfg, {}, corrector_ckpt
+    use_spec = exec_h > 1 or corr_type is not None
+    overrides: Dict[str, Any] = {
+        "spec_enabled": use_spec,
+        "speculate": use_spec,
+        "spec_plan_horizon": args.spec_plan_horizon,
+        "spec_exec_horizon": exec_h,
+        "spec_mismatch_threshold": args.spec_mismatch_threshold,
+        "use_corrector": corr_type is not None,
+        "corrector_ckpt": corr_ckpt,
+    }
+    return overrides
+
+
+def _build_agent(
+    model_id: str, ckpt_path: str, model_info: Dict[str, str], variant: Dict[str, Any], args: argparse.Namespace
+):
+    corr_type = variant["corrector_type"]
+    corr_ckpt = _corrector_ckpt_for(model_id, corr_type, args)
+
+    if args.collection_mode == "multi":
+        task_set, model_size = parse_multitask_model_id(Path(model_id).stem)
+        agent, cfg = load_pretrained_tdmpc2(
+            ckpt_path=ckpt_path,
+            task=task_set,
+            model_size=model_size,
+            device=args.device,
+            obs=args.obs_type,
+            cfg_overrides=_variant_overrides(variant, corr_ckpt, args),
+        )
+        cfg.task_set = task_set
+    else:
+        model_size = info_size_to_int(model_info.get("model_size") or model_id.split("-")[-1])
+        target_task = args.task or model_info.get("model_name") or model_id.split("-")[0]
+        agent, cfg = load_pretrained_tdmpc2(
+            ckpt_path=ckpt_path,
+            task=target_task,
+            model_size=model_size,
+            device=args.device,
+            obs=args.obs_type,
+            cfg_overrides=_variant_overrides(variant, corr_ckpt, args),
+        )
+    cfg.model_size = model_size
+    cfg.model_id = model_id
+    return agent, cfg, {}, corr_ckpt
 
 
 def run_rollout(agent: TDMPC2, env, episodes: int, max_steps: int) -> Dict[str, List[float]]:
@@ -134,10 +185,12 @@ def summarize(metrics: Dict[str, List[float]]) -> Dict[str, float]:
         "mean_return": float(returns.mean()),
         "median_return": float(np.median(returns)),
         "std_return": float(returns.std()),
+        "min_return": float(returns.min()),
         "p5_return": float(np.percentile(returns, 5.0)),
         "mean_length": float(lengths.mean()),
         "mean_replans": float(replans.mean()),
         "mean_corrector_steps": float(corr_steps.mean()),
+        "episodes": float(len(returns)),
     }
 
 
@@ -174,27 +227,32 @@ def main_worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
         model_size = info.get("model_size", "")
         for variant in EVAL_VARIANTS:
             corr_type = variant["corrector_type"]
-            agent, cfg, _, corrector_ckpt = _build_agent(model_id, ckpt_path, variant, args)
+            agent, cfg, _, corrector_ckpt = _build_agent(model_id, ckpt_path, info, variant, args)
             if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                 agent.model = nn.DataParallel(agent.model)
                 if getattr(agent, "corrector", None) is not None:
                     agent.corrector = nn.DataParallel(agent.corrector)
-            if not hasattr(cfg, "obs") or str(cfg.obs).lower() not in {"state", "rgb"}:
-                cfg.obs = args.obs_type.lower()
+            if args.collection_mode == "multi":
+                env = make_env(deepcopy(cfg))
             else:
-                cfg.obs = str(cfg.obs).lower()
-            cfg.obs_type = str(getattr(cfg, "obs_type", cfg.obs)).lower()
-            if cfg.obs_type not in {"state", "rgb"}:
-                cfg.obs_type = cfg.obs
-            env = make_env(cfg)
+                if not hasattr(cfg, "obs") or str(cfg.obs).lower() not in {"state", "rgb"}:
+                    cfg.obs = args.obs_type.lower()
+                else:
+                    cfg.obs = str(cfg.obs).lower()
+                cfg.obs_type = str(getattr(cfg, "obs_type", cfg.obs)).lower()
+                if cfg.obs_type not in {"state", "rgb"}:
+                    cfg.obs_type = cfg.obs
+                env = make_env(cfg)
             metrics = run_rollout(agent, env, episodes=args.episodes, max_steps=args.max_steps)
             summary = summarize(metrics)
             meta = {
-                "task": args.task or cfg.task,
+                "task": getattr(cfg, "task_set", None) or args.task or cfg.task,
                 "variant": variant["name"],
+                "mode": variant["name"],
                 "model_id": model_id,
                 "model_name": model_name,
-                "model_size": model_size,
+                "model_size": getattr(cfg, "model_size", model_size),
+                "task_set": getattr(cfg, "task_set", cfg.task),
                 "corrector_type": corr_type,
                 "exec_horizon": variant["exec_horizon"],
                 "episodes": args.episodes,
@@ -278,13 +336,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional path to save a quick aggregate horizon plot (uses aggregated CSV).",
     )
-    parser.add_argument("--results_csv", type=str, default="results/corrector_eval/summary.csv")
     parser.add_argument(
         "--obs_type",
         type=str,
         default="state",
         choices=["state", "rgb"],
         help="Observation type for dmcontrol envs.",
+    )
+    parser.add_argument(
+        "--collection_mode",
+        type=str,
+        default="multi",
+        choices=["single", "multi"],
+        help="single: legacy single-task eval; multi: load mt30/mt70/mt80 as multi-task envs.",
     )
     return parser.parse_args()
 
